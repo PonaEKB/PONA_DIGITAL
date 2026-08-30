@@ -100,7 +100,7 @@ async function publishScheduledContent() {
 }
 
 bot.launch();
-console.log('🤖 Бот PONA DIGITAL + OpenRouter запущен!');
+console.log('🤖 Бот PONA DIGITAL + Claude запущен!');
 
 if (CHANNEL_ID) {
   setInterval(publishScheduledContent, 60 * 1000);
