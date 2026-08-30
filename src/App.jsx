@@ -2,9 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import './App.css';
 
-const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_API_KEY;
-const AI_MODEL = 'deepseek/deepseek-r1';
-
 function App() {
   const [projects, setProjects] = useState([]);
   const [allTasks, setAllTasks] = useState([]);
@@ -121,27 +118,17 @@ function App() {
 
   async function askAI(messages) {
     try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const response = await fetch('/api/ai', {
         method: 'POST',
-        headers: {
-          'Authorization': 'Bearer ' + OPENROUTER_KEY,
-          'HTTP-Referer': 'http://localhost:3000',
-          'X-Title': 'PONA DIGITAL',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: AI_MODEL,
-          messages: messages,
-          max_tokens: 1500,
-          temperature: 0.7
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages })
       });
       const data = await response.json();
       if (data.choices && data.choices[0]) {
         return data.choices[0].message.content;
       }
       if (data.error) {
-        return 'Ошибка: ' + data.error.message;
+        return 'Ошибка: ' + (data.error.message || data.error);
       }
       return 'Ошибка: неизвестный ответ от API';
     } catch (err) {
