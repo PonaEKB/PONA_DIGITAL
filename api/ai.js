@@ -1,3 +1,7 @@
+import Anthropic from '@anthropic-ai/sdk';
+
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -10,23 +14,19 @@ export default async function handler(req, res) {
     return;
   }
 
+  const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n') || undefined;
+  const conversation = messages.filter(m => m.role === 'user' || m.role === 'assistant');
+
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + process.env.OPENROUTER_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'deepseek/deepseek-r1',
-        messages,
-        max_tokens: 1500,
-        temperature: 0.7
-      })
+    const response = await client.messages.create({
+      model: 'claude-opus-5',
+      max_tokens: 4096,
+      system,
+      messages: conversation
     });
-    const data = await response.json();
-    res.status(response.status).json(data);
+    const textBlock = response.content.find(b => b.type === 'text');
+    res.status(200).json({ choices: [{ message: { content: textBlock ? textBlock.text : '' } }] });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status || 500).json({ error: { message: err.message } });
   }
 }

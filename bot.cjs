@@ -1,37 +1,27 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY;
 
 const bot = new Telegraf(TOKEN);
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function askAI(question) {
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + OPENROUTER_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'deepseek/deepseek-r1',
-        messages: [
-          { role: 'system', content: 'Ты — AI-ассистент PONA DIGITAL. Отвечай на русском.' },
-          { role: 'user', content: question }
-        ],
-        max_tokens: 1000
-      })
+    const response = await anthropic.messages.create({
+      model: 'claude-opus-5',
+      max_tokens: 4096,
+      system: 'Ты — AI-ассистент PONA DIGITAL. Отвечай на русском.',
+      messages: [{ role: 'user', content: question }]
     });
-    const data = await response.json();
-    if (data.choices && data.choices[0]) {
-      return data.choices[0].message.content;
-    }
-    return 'Ошибка: ' + (data.error?.message || 'неизвестно');
+    const textBlock = response.content.find(b => b.type === 'text');
+    return textBlock ? textBlock.text : 'Ошибка: пустой ответ';
   } catch (err) {
     return 'Ошибка: ' + err.message;
   }
@@ -84,5 +74,38 @@ bot.command('post', async (ctx) => {
   ctx.reply(`📝 ПОСТ:\n\n${answer}`);
 });
 
+async function publishScheduledContent() {
+  if (!CHANNEL_ID) return;
+  const { data: items, error } = await supabase
+    .from('content_items')
+    .select('*')
+    .eq('platform', 'telegram')
+    .eq('status', 'scheduled')
+    .lte('scheduled_at', new Date().toISOString())
+    .order('scheduled_at', { ascending: true });
+
+  if (error || !items || items.length === 0) return;
+
+  for (const item of items) {
+    try {
+      const text = item.title ? `${item.title}\n\n${item.body}` : item.body;
+      await bot.telegram.sendMessage(CHANNEL_ID, text);
+      await supabase.from('content_items').update({ status: 'published', published_at: new Date().toISOString(), error: null }).eq('id', item.id);
+      console.log(`✅ Опубликован пост "${item.title || item.id}" в Telegram`);
+    } catch (err) {
+      await supabase.from('content_items').update({ status: 'failed', error: err.message }).eq('id', item.id);
+      console.log(`❌ Ошибка публикации поста "${item.title || item.id}": ${err.message}`);
+    }
+  }
+}
+
 bot.launch();
 console.log('🤖 Бот PONA DIGITAL + OpenRouter запущен!');
+
+if (CHANNEL_ID) {
+  setInterval(publishScheduledContent, 60 * 1000);
+  publishScheduledContent();
+  console.log('📤 Планировщик контент-завода запущен (проверка очереди раз в минуту)');
+} else {
+  console.log('⚠️ TELEGRAM_CHANNEL_ID не задан — автопубликация в Telegram отключена');
+}

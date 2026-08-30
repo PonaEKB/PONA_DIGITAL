@@ -9,6 +9,9 @@ function App() {
   const [selectedProject, setSelectedProject] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [projectTab, setProjectTab] = useState('idea');
+  const [projectContent, setProjectContent] = useState([]);
+  const [contentLoading, setContentLoading] = useState(false);
+  const [contentFilter, setContentFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [email, setEmail] = useState('');
@@ -36,6 +39,101 @@ function App() {
     setProjects(projectsData || []);
     setAllTasks(tasksData || []);
     setFinances(financesData || []);
+  }
+
+  const PLATFORMS = [
+    { id: 'telegram', label: 'Telegram', icon: '✈️', live: true },
+    { id: 'zen', label: 'Дзен', icon: '📰', live: false },
+    { id: 'vk', label: 'VK', icon: '🔵', live: false },
+    { id: 'instagram', label: 'Instagram', icon: '📸', live: false },
+    { id: 'max', label: 'MAX', icon: '💬', live: false }
+  ];
+
+  function getPlatformInfo(id) {
+    return PLATFORMS.find(p => p.id === id) || { id, label: id, icon: '📄', live: false };
+  }
+
+  function getContentStatusLabel(status) {
+    switch (status) {
+      case 'draft': return '📝 Черновик';
+      case 'scheduled': return '⏳ В очереди';
+      case 'published': return '✅ Опубликован';
+      case 'failed': return '❌ Ошибка';
+      default: return status;
+    }
+  }
+
+  async function loadProjectContent(projectId) {
+    setContentLoading(true);
+    const { data } = await supabase.from('content_items').select('*').eq('project_id', projectId).order('created_at', { ascending: false });
+    setProjectContent(data || []);
+    setContentLoading(false);
+  }
+
+  async function createContentItem() {
+    if (!selectedProject) return;
+    const platformInput = prompt(`Площадка (${PLATFORMS.map(p => p.id).join(', ')}):`, 'telegram');
+    if (!platformInput) return;
+    const platform = platformInput.trim().toLowerCase();
+    if (!PLATFORMS.some(p => p.id === platform)) {
+      alert('Неизвестная площадка. Доступно: ' + PLATFORMS.map(p => p.id).join(', '));
+      return;
+    }
+    const title = prompt('Заголовок / тема поста:');
+    if (!title) return;
+    const body = prompt('Текст поста:');
+    if (!body) return;
+    const scheduleInput = prompt('Запланировать на (ГГГГ-ММ-ДД ЧЧ:ММ), оставь пустым для черновика:');
+    let status = 'draft';
+    let scheduled_at = null;
+    if (scheduleInput && scheduleInput.trim()) {
+      const parsed = new Date(scheduleInput.trim().replace(' ', 'T'));
+      if (isNaN(parsed.getTime())) {
+        alert('Не удалось распознать дату, сохранено как черновик');
+      } else {
+        scheduled_at = parsed.toISOString();
+        status = 'scheduled';
+      }
+    }
+    await supabase.from('content_items').insert({ project_id: selectedProject.id, platform, title, body, status, scheduled_at });
+    loadProjectContent(selectedProject.id);
+  }
+
+  async function deleteContentItem(id) {
+    if (!confirm('Удалить пост?')) return;
+    await supabase.from('content_items').delete().eq('id', id);
+    loadProjectContent(selectedProject.id);
+  }
+
+  async function scheduleContentItem(item) {
+    const scheduleInput = prompt('Запланировать на (ГГГГ-ММ-ДД ЧЧ:ММ):');
+    if (!scheduleInput) return;
+    const parsed = new Date(scheduleInput.trim().replace(' ', 'T'));
+    if (isNaN(parsed.getTime())) {
+      alert('Не удалось распознать дату');
+      return;
+    }
+    await supabase.from('content_items').update({ status: 'scheduled', scheduled_at: parsed.toISOString() }).eq('id', item.id);
+    loadProjectContent(selectedProject.id);
+  }
+
+  async function publishNow(item) {
+    if (item.platform !== 'telegram') {
+      alert('Автопубликация пока подключена только для Telegram. Остальные площадки — публикация вручную.');
+      return;
+    }
+    try {
+      const response = await fetch('/api/publish-telegram', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: item.id })
+      });
+      const data = await response.json();
+      if (!response.ok) alert('Ошибка публикации: ' + (data.error || 'неизвестно'));
+    } catch (err) {
+      alert('Ошибка публикации: ' + err.message);
+    }
+    loadProjectContent(selectedProject.id);
   }
 
   async function handleAuth() {
@@ -343,7 +441,7 @@ function App() {
             </div>
             <div className="project-list">
               {projects.map((project) => (
-                <div key={project.id} className={`project-item ${selectedProject?.id === project.id ? 'active' : ''}`} onClick={() => { setSelectedProject(project); setProjectTab('idea'); }}>
+                <div key={project.id} className={`project-item ${selectedProject?.id === project.id ? 'active' : ''}`} onClick={() => { setSelectedProject(project); setProjectTab('idea'); loadProjectContent(project.id); }}>
                   <span className="project-color" style={{ background: project.color || '#667eea' }}></span>
                   <span className="project-name">{project.name}</span>
                   <span className="project-status">{getStatusLabel(project.status)}</span>
@@ -416,10 +514,37 @@ function App() {
                 {projectTab === 'content' && (
                   <div className="project-section">
                     <h3>🎨 Контент</h3>
-                    <p className="section-desc">Все посты, статьи, изображения, видео</p>
-                    <div className="section-placeholder">
-                      <p>Здесь будут храниться все материалы</p>
-                      <button className="section-btn">➕ Добавить контент</button>
+                    <p className="section-desc">Все посты контент-завода по площадкам</p>
+                    <div className="content-toolbar">
+                      <button className="section-btn" onClick={createContentItem}>➕ Добавить пост</button>
+                      <select className="content-filter" value={contentFilter} onChange={(e) => setContentFilter(e.target.value)}>
+                        <option value="all">Все площадки</option>
+                        {PLATFORMS.map(p => <option key={p.id} value={p.id}>{p.icon} {p.label}</option>)}
+                      </select>
+                    </div>
+                    {contentLoading && <p className="empty">Загрузка...</p>}
+                    <div className="content-list">
+                      {!contentLoading && projectContent.filter(c => contentFilter === 'all' || c.platform === contentFilter).length === 0 && (
+                        <p className="empty">Постов пока нет</p>
+                      )}
+                      {projectContent.filter(c => contentFilter === 'all' || c.platform === contentFilter).map((item) => {
+                        const platform = getPlatformInfo(item.platform);
+                        return (
+                          <div key={item.id} className="content-item">
+                            <span className="content-platform">{platform.icon} {platform.label}{!platform.live && <span className="content-platform-badge">черновик до API</span>}</span>
+                            <div className="content-body">
+                              <span className="content-title">{item.title}</span>
+                              <span className="content-text">{item.body}</span>
+                            </div>
+                            <span className={`content-status status-${item.status}`}>{getContentStatusLabel(item.status)}</span>
+                            <div className="content-actions">
+                              {item.status === 'draft' && <button className="content-action-btn" onClick={() => scheduleContentItem(item)}>⏳ В очередь</button>}
+                              {(item.status === 'scheduled' || item.status === 'failed') && <button className="content-action-btn" onClick={() => publishNow(item)}>🚀 Опубликовать</button>}
+                              <button className="content-action-btn delete" onClick={() => deleteContentItem(item.id)}>🗑️</button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -427,10 +552,36 @@ function App() {
                 {projectTab === 'posting' && (
                   <div className="project-section">
                     <h3>📤 Постинг</h3>
-                    <p className="section-desc">Подключённые соцсети и календарь публикаций</p>
-                    <div className="section-placeholder">
-                      <p>Здесь будет календарь публикаций и соцсети</p>
-                      <button className="section-btn">📅 Открыть календарь</button>
+                    <p className="section-desc">Очередь публикаций: Telegram публикуется автоматически по расписанию, остальные площадки — вручную до подключения их API</p>
+                    <div className="content-list">
+                      {projectContent.filter(c => c.status === 'scheduled' || c.status === 'published' || c.status === 'failed').length === 0 && (
+                        <p className="empty">Нет запланированных или опубликованных постов</p>
+                      )}
+                      {projectContent
+                        .filter(c => c.status === 'scheduled' || c.status === 'published' || c.status === 'failed')
+                        .sort((a, b) => new Date(a.scheduled_at || a.created_at) - new Date(b.scheduled_at || b.created_at))
+                        .map((item) => {
+                          const platform = getPlatformInfo(item.platform);
+                          return (
+                            <div key={item.id} className="content-item">
+                              <span className="content-platform">{platform.icon} {platform.label}</span>
+                              <div className="content-body">
+                                <span className="content-title">{item.title}</span>
+                                <span className="content-text">
+                                  {item.status === 'published' && item.published_at && `Опубликовано: ${new Date(item.published_at).toLocaleString('ru-RU')}`}
+                                  {item.status === 'scheduled' && item.scheduled_at && `Запланировано: ${new Date(item.scheduled_at).toLocaleString('ru-RU')}`}
+                                  {item.status === 'failed' && (item.error || 'Ошибка публикации')}
+                                </span>
+                              </div>
+                              <span className={`content-status status-${item.status}`}>{getContentStatusLabel(item.status)}</span>
+                              {item.status !== 'published' && (
+                                <div className="content-actions">
+                                  <button className="content-action-btn" onClick={() => publishNow(item)}>🚀 Сейчас</button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                     </div>
                   </div>
                 )}
