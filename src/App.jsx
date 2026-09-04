@@ -25,6 +25,7 @@ function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [ideaPrompt, setIdeaPrompt] = useState('');
   const [analysisPrompt, setAnalysisPrompt] = useState('');
+  const [competitorChannels, setCompetitorChannels] = useState('');
   const [planPrompt, setPlanPrompt] = useState('');
   const abortControllerRef = useRef(null);
 
@@ -244,6 +245,30 @@ function App() {
     abortControllerRef.current?.abort();
   }
 
+  async function fetchCompetitorPosts(signal) {
+    const channels = competitorChannels.split(/[\n,]/).map(c => c.trim()).filter(Boolean);
+    if (channels.length === 0) return { context: '', errors: [] };
+
+    const response = await fetch('/api/telegram-competitors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channels }),
+      signal
+    });
+    const data = await response.json();
+
+    let context = '';
+    const errors = [];
+    for (const r of (data.results || [])) {
+      if (r.error) {
+        errors.push(`${r.channel}: ${r.error}`);
+        continue;
+      }
+      context += `\n\nКанал @${r.channel}, последние посты:\n` + r.posts.map((p, i) => `${i + 1}. ${p.slice(0, 300)}`).join('\n');
+    }
+    return { context, errors };
+  }
+
   async function sendAiMessage() {
     if (!aiInput.trim() || aiLoading) return;
     const userMsg = { role: 'user', text: aiInput };
@@ -291,13 +316,18 @@ function App() {
     setAiLoading(true);
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    const extra = analysisPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${analysisPrompt.trim()}` : '';
     try {
+      const { context: competitorContext, errors } = await fetchCompetitorPosts(controller.signal);
+      const extra = analysisPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${analysisPrompt.trim()}` : '';
+      const competitorBlock = competitorContext
+        ? `\n\nДанные из открытых Telegram-каналов конкурентов (последние посты):${competitorContext}\n\nНа основе этих постов сделай выводы: что сейчас в тренде, какие форматы заходят лучше всего, что можно предложить и как вести канал.`
+        : '';
       const answer = await askAI([
         { role: 'system', content: 'Ты — аналитик. Отвечай на русском.' },
-        { role: 'user', content: `Сделай анализ ниши для проекта "${selectedProject.name}".${extra} Опиши: тренды, конкурентов, фишки, монетизацию.` }
+        { role: 'user', content: `Сделай анализ ниши для проекта "${selectedProject.name}".${extra}${competitorBlock} Опиши: тренды, конкурентов, фишки, монетизацию.` }
       ], controller.signal);
-      alert(answer);
+      const errorNote = errors.length ? `\n\n⚠️ Не удалось получить данные по каналам: ${errors.join('; ')}` : '';
+      alert(answer + errorNote);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -338,10 +368,14 @@ function App() {
         { role: 'user', content: `Разработай подробную концепцию проекта "${selectedProject.name}"${selectedProject.description ? ': ' + selectedProject.description : ''}.${ideaExtra} Опиши: идею, стратегию, монетизацию, целевую аудиторию.` }
       ], controller.signal);
 
+      const { context: competitorContext } = await fetchCompetitorPosts(controller.signal);
       const analysisExtra = analysisPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${analysisPrompt.trim()}` : '';
+      const competitorBlock = competitorContext
+        ? `\n\nДанные из открытых Telegram-каналов конкурентов (последние посты):${competitorContext}\n\nНа основе этих постов сделай выводы: что сейчас в тренде, какие форматы заходят лучше всего, что можно предложить и как вести канал.`
+        : '';
       const analysisAnswer = await askAI([
         { role: 'system', content: 'Ты — аналитик. Отвечай на русском.' },
-        { role: 'user', content: `Вот концепция проекта "${selectedProject.name}":\n\n${ideaAnswer}\n\nНа основе этой концепции сделай анализ ниши.${analysisExtra} Опиши: тренды, конкурентов, фишки, монетизацию.` }
+        { role: 'user', content: `Вот концепция проекта "${selectedProject.name}":\n\n${ideaAnswer}\n\nНа основе этой концепции сделай анализ ниши.${analysisExtra}${competitorBlock} Опиши: тренды, конкурентов, фишки, монетизацию.` }
       ], controller.signal);
 
       const planExtra = planPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${planPrompt.trim()}` : '';
@@ -586,15 +620,23 @@ function App() {
                   <div className="project-section">
                     <h3>🔍 Анализ ниши</h3>
                     <p className="section-desc">AI собирает данные о трендах, конкурентах и фишках</p>
-                    <p className="section-hint">👉 Вы пишете: нишу и что важно учесть — регион, сегмент аудитории, известных конкурентов. AI предложит: варианты анализа трендов, конкурентов и точек роста.</p>
+                    <p className="section-hint">👉 Вы пишете: нишу и что важно учесть. Укажите каналы конкурентов — AI зайдёт в открытые Telegram-каналы, изучит последние 20 постов и сделает вывод, что сейчас в тренде, что в топе и как вести канал.</p>
                     <div className="section-placeholder">
                       <textarea
                         className="idea-input"
-                        placeholder="Например: ниша доставки готовой еды для спортсменов, Москва, конкуренты — Grow Food"
+                        placeholder="Например: ниша доставки готовой еды для спортсменов, Москва"
                         value={analysisPrompt}
                         onChange={(e) => setAnalysisPrompt(e.target.value)}
                         disabled={aiLoading}
                         rows={3}
+                      />
+                      <textarea
+                        className="idea-input"
+                        placeholder="Каналы конкурентов через запятую или с новой строки: @channel1, @channel2 (необязательно)"
+                        value={competitorChannels}
+                        onChange={(e) => setCompetitorChannels(e.target.value)}
+                        disabled={aiLoading}
+                        rows={2}
                       />
                       <p>Нажми, чтобы AI проанализировал нишу</p>
                       <div className="section-actions">
