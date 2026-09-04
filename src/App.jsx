@@ -121,6 +121,7 @@ function App() {
     switch (status) {
       case 'draft': return '📝 Черновик';
       case 'scheduled': return '⏳ В очереди';
+      case 'publishing': return '📤 Публикуется...';
       case 'published': return '✅ Опубликован';
       case 'failed': return '❌ Ошибка';
       default: return status;

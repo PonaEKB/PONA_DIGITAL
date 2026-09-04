@@ -117,57 +117,72 @@ async function generateAndUploadImage(id, prompt) {
   return pub.publicUrl;
 }
 
+let notifyInProgress = false;
+
 async function notifyNewDrafts() {
-  if (!OWNER_CHAT_ID) return;
+  if (!OWNER_CHAT_ID || notifyInProgress) return;
+  notifyInProgress = true;
+  try {
+    const { count: pendingCount } = await supabase
+      .from('content_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('platform', 'telegram')
+      .eq('status', 'draft')
+      .not('notified_at', 'is', null);
 
-  const { count: pendingCount } = await supabase
-    .from('content_items')
-    .select('id', { count: 'exact', head: true })
-    .eq('platform', 'telegram')
-    .eq('status', 'draft')
-    .not('notified_at', 'is', null);
+    const freeSlots = MAX_PENDING_APPROVAL - (pendingCount || 0);
+    if (freeSlots <= 0) return;
 
-  const freeSlots = MAX_PENDING_APPROVAL - (pendingCount || 0);
-  if (freeSlots <= 0) return;
+    const { data: items, error } = await supabase
+      .from('content_items')
+      .select('*')
+      .eq('platform', 'telegram')
+      .eq('status', 'draft')
+      .is('notified_at', null)
+      .order('scheduled_at', { ascending: true })
+      .limit(freeSlots);
 
-  const { data: items, error } = await supabase
-    .from('content_items')
-    .select('*')
-    .eq('platform', 'telegram')
-    .eq('status', 'draft')
-    .is('notified_at', null)
-    .order('scheduled_at', { ascending: true })
-    .limit(freeSlots);
+    if (error || !items || items.length === 0) return;
 
-  if (error || !items || items.length === 0) return;
+    for (const item of items) {
+      try {
+        // Сразу помечаем как "в обработке" (условно, по notified_at IS NULL) — если строку уже
+        // забрал другой запуск, claimed.length будет 0 и мы просто пропустим пост, не отправляя дубль.
+        const { data: claimed } = await supabase
+          .from('content_items')
+          .update({ notified_at: new Date().toISOString() })
+          .eq('id', item.id)
+          .is('notified_at', null)
+          .select('id');
+        if (!claimed || claimed.length === 0) continue;
 
-  for (const item of items) {
-    try {
-      let mediaUrl = item.media_url;
-      if (!mediaUrl && item.image_prompt) {
-        try {
-          mediaUrl = await generateAndUploadImage(item.id, item.image_prompt);
-          await supabase.from('content_items').update({ media_url: mediaUrl }).eq('id', item.id);
-        } catch (imgErr) {
-          console.log(`⚠️ Не удалось сгенерировать картинку для ${item.id}: ${imgErr.message}`);
+        let mediaUrl = item.media_url;
+        if (!mediaUrl && item.image_prompt) {
+          try {
+            mediaUrl = await generateAndUploadImage(item.id, item.image_prompt);
+            await supabase.from('content_items').update({ media_url: mediaUrl }).eq('id', item.id);
+          } catch (imgErr) {
+            console.log(`⚠️ Не удалось сгенерировать картинку для ${item.id}: ${imgErr.message}`);
+          }
         }
-      }
 
-      const when = item.scheduled_at ? new Date(item.scheduled_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : 'без даты';
-      const caption = `На утверждение (${item.topic || 'без темы'}), план на ${when} МСК:\n\n${item.body}`.slice(0, 1024);
-      const keyboard = { inline_keyboard: [[
-        { text: '✅ Утвердить', callback_data: `approve:${item.id}` },
-        { text: '❌ Отклонить', callback_data: `reject:${item.id}` }
-      ]] };
-      if (mediaUrl) {
-        await bot.telegram.sendPhoto(OWNER_CHAT_ID, mediaUrl, { caption, reply_markup: keyboard });
-      } else {
-        await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { reply_markup: keyboard });
+        const when = item.scheduled_at ? new Date(item.scheduled_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : 'без даты';
+        const caption = `На утверждение (${item.topic || 'без темы'}), план на ${when} МСК:\n\n${item.body}`.slice(0, 1024);
+        const keyboard = { inline_keyboard: [[
+          { text: '✅ Утвердить', callback_data: `approve:${item.id}` },
+          { text: '❌ Отклонить', callback_data: `reject:${item.id}` }
+        ]] };
+        if (mediaUrl) {
+          await bot.telegram.sendPhoto(OWNER_CHAT_ID, mediaUrl, { caption, reply_markup: keyboard });
+        } else {
+          await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { reply_markup: keyboard });
+        }
+      } catch (err) {
+        console.log(`❌ Не удалось отправить на утверждение пост ${item.id}: ${err.message}`);
       }
-      await supabase.from('content_items').update({ notified_at: new Date().toISOString() }).eq('id', item.id);
-    } catch (err) {
-      console.log(`❌ Не удалось отправить на утверждение пост ${item.id}: ${err.message}`);
     }
+  } finally {
+    notifyInProgress = false;
   }
 }
 
@@ -223,8 +238,12 @@ bot.on('chat_member', async (ctx) => {
   });
 });
 
+let publishInProgress = false;
+
 async function publishScheduledContent() {
-  if (!CHANNEL_ID) return;
+  if (!CHANNEL_ID || publishInProgress) return;
+  publishInProgress = true;
+  try {
   const { data: items, error } = await supabase
     .from('content_items')
     .select('*')
@@ -237,6 +256,16 @@ async function publishScheduledContent() {
 
   for (const item of items) {
     try {
+      // Атомарно "забираем" пост (scheduled -> publishing) — если строку уже забрал
+      // другой запуск (перекрытие интервалов), claimed.length будет 0 и мы её пропустим.
+      const { data: claimed } = await supabase
+        .from('content_items')
+        .update({ status: 'publishing' })
+        .eq('id', item.id)
+        .eq('status', 'scheduled')
+        .select('id');
+      if (!claimed || claimed.length === 0) continue;
+
       const text = item.title ? `${item.title}\n\n${item.body}` : item.body;
       if (item.media_url) {
         const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
@@ -250,6 +279,9 @@ async function publishScheduledContent() {
       await supabase.from('content_items').update({ status: 'failed', error: err.message }).eq('id', item.id);
       console.log(`❌ Ошибка публикации поста "${item.title || item.id}": ${err.message}`);
     }
+  }
+  } finally {
+    publishInProgress = false;
   }
 }
 
