@@ -90,8 +90,21 @@ bot.command('post', async (ctx) => {
   ctx.reply(`📝 ПОСТ:\n\n${answer}`);
 });
 
+const MAX_PENDING_APPROVAL = 12; // держим в очереди на утверждение не больше ~3 дней контента разом
+
 async function notifyNewDrafts() {
   if (!OWNER_CHAT_ID) return;
+
+  const { count: pendingCount } = await supabase
+    .from('content_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('platform', 'telegram')
+    .eq('status', 'draft')
+    .not('notified_at', 'is', null);
+
+  const freeSlots = MAX_PENDING_APPROVAL - (pendingCount || 0);
+  if (freeSlots <= 0) return;
+
   const { data: items, error } = await supabase
     .from('content_items')
     .select('*')
@@ -99,7 +112,7 @@ async function notifyNewDrafts() {
     .eq('status', 'draft')
     .is('notified_at', null)
     .order('scheduled_at', { ascending: true })
-    .limit(10);
+    .limit(freeSlots);
 
   if (error || !items || items.length === 0) return;
 
