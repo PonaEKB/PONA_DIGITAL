@@ -400,6 +400,41 @@ function App() {
     }
   }
 
+  async function generateContentBatch() {
+    if (!selectedProject) return;
+    setAiLoading(true);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    try {
+      const context = [
+        ideaResult ? `Идея и концепция:\n${ideaResult}` : '',
+        analysisResult ? `Анализ ниши и конкурентов:\n${analysisResult}` : '',
+        planResult ? `Стратегия и контент-план:\n${planResult}` : ''
+      ].filter(Boolean).join('\n\n');
+
+      const response = await fetch('/api/generate-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: selectedProject.id, projectName: selectedProject.name, context, days: 3, postsPerDay: 4 }),
+        signal: controller.signal
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        alert('Ошибка генерации: ' + (data.error || 'неизвестная ошибка'));
+      } else {
+        let msg = `✅ Создано постов: ${data.inserted} из ${data.totalRequested}`;
+        if (data.failed && data.failed.length) msg += `\n\n⚠️ Не удалось сгенерировать часть постов:\n${data.failed.join('\n')}`;
+        alert(msg);
+        await loadProjectContent(selectedProject.id);
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') alert('Ошибка: ' + err.message);
+    } finally {
+      abortControllerRef.current = null;
+      setAiLoading(false);
+    }
+  }
+
   if (loading) return <div className="loading">Загрузка...</div>;
 
   if (!user) {
@@ -701,8 +736,17 @@ function App() {
                   <div className="project-section">
                     <h3>🎨 Контент</h3>
                     <p className="section-desc">Все посты контент-завода по площадкам</p>
+                    <p className="section-hint">👉 Кнопка ниже сама сгенерирует тексты и картинки на 3 дня вперёд (4 поста/день) для Telegram — используя идею, анализ и стратегию, если они уже сгенерированы. Готовые посты появятся ниже со статусом «В очереди» и опубликуются ботом по расписанию.</p>
                     <div className="content-toolbar">
-                      <button className="section-btn" onClick={createContentItem}>➕ Добавить пост</button>
+                      <button className="section-btn chain-btn" onClick={generateContentBatch} disabled={aiLoading}>
+                        {aiLoading ? '⏳ Генерирую тексты и картинки...' : '🤖 Сгенерировать контент на 3 дня (4 поста/день)'}
+                      </button>
+                      {aiLoading && (
+                        <button className="section-btn cancel-btn" onClick={cancelGeneration}>
+                          ✋ Отменить
+                        </button>
+                      )}
+                      <button className="section-btn" onClick={createContentItem}>➕ Добавить пост вручную</button>
                       <select className="content-filter" value={contentFilter} onChange={(e) => setContentFilter(e.target.value)}>
                         <option value="all">Все площадки</option>
                         {PLATFORMS.map(p => <option key={p.id} value={p.id}>{p.icon} {p.label}</option>)}
@@ -718,9 +762,11 @@ function App() {
                         return (
                           <div key={item.id} className="content-item">
                             <span className="content-platform">{platform.icon} {platform.label}{!platform.live && <span className="content-platform-badge">черновик до API</span>}</span>
+                            {item.media_url && <img className="content-thumb" src={item.media_url} alt="" />}
                             <div className="content-body">
                               <span className="content-title">{item.title}</span>
                               <span className="content-text">{item.body}</span>
+                              {item.scheduled_at && <span className="content-text">📅 {new Date(item.scheduled_at).toLocaleString('ru-RU')}</span>}
                             </div>
                             <span className={`content-status status-${item.status}`}>{getContentStatusLabel(item.status)}</span>
                             <div className="content-actions">

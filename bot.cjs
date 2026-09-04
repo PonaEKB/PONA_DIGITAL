@@ -5,13 +5,15 @@ const { createClient } = require('@supabase/supabase-js');
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+// service_role, не anon — content_items разрешён на запись/чтение только authenticated-сессиям,
+// а бот работает без пользовательской сессии, поэтому ему нужен ключ, который обходит RLS.
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
 const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const MODEL = 'anthropic/claude-opus-5';
 
 const bot = new Telegraf(TOKEN);
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 async function askAI(question) {
   try {
@@ -100,7 +102,12 @@ async function publishScheduledContent() {
   for (const item of items) {
     try {
       const text = item.title ? `${item.title}\n\n${item.body}` : item.body;
-      await bot.telegram.sendMessage(CHANNEL_ID, text);
+      if (item.media_url) {
+        const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
+        await bot.telegram.sendPhoto(CHANNEL_ID, item.media_url, { caption });
+      } else {
+        await bot.telegram.sendMessage(CHANNEL_ID, text);
+      }
       await supabase.from('content_items').update({ status: 'published', published_at: new Date().toISOString(), error: null }).eq('id', item.id);
       console.log(`✅ Опубликован пост "${item.title || item.id}" в Telegram`);
     } catch (err) {

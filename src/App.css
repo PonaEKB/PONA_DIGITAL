@@ -1042,6 +1042,14 @@
   flex-wrap: wrap;
 }
 
+.content-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
 .content-platform {
   font-size: 14px;
   color: #d0d0f0;

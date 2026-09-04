@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/generate-content.js": {
+      "maxDuration": 60
+    }
+  }
+}
