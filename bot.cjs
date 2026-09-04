@@ -8,6 +8,7 @@ const supabaseUrl = process.env.VITE_SUPABASE_URL;
 // service_role, не anon — content_items разрешён на запись/чтение только authenticated-сессиям,
 // а бот работает без пользовательской сессии, поэтому ему нужен ключ, который обходит RLS.
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const OWNER_CHAT_ID = process.env.OWNER_CHAT_ID;
 const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
 const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const MODEL = 'anthropic/claude-opus-5';
@@ -40,7 +41,9 @@ async function askAI(question) {
   }
 }
 
-bot.start((ctx) => ctx.reply('🚀 Привет! Я бот PONA DIGITAL с AI!\n\n/ai [вопрос] — спросить AI\n/idea [тема] — идея проекта\n/post [тема] — написать пост\n/stats — статистика\n/projects — проекты\n/report — отчёт'));
+bot.start((ctx) => ctx.reply('🚀 Привет! Я бот PONA DIGITAL с AI!\n\n/ai [вопрос] — спросить AI\n/idea [тема] — идея проекта\n/post [тема] — написать пост\n/stats — статистика\n/projects — проекты\n/report — отчёт\n/myid — узнать свой chat_id'));
+
+bot.command('myid', (ctx) => ctx.reply(`Ваш chat_id: ${ctx.chat.id}`));
 
 bot.command('stats', async (ctx) => {
   const { data: projects } = await supabase.from('projects').select('*');
@@ -87,6 +90,49 @@ bot.command('post', async (ctx) => {
   ctx.reply(`📝 ПОСТ:\n\n${answer}`);
 });
 
+async function notifyNewDrafts() {
+  if (!OWNER_CHAT_ID) return;
+  const { data: items, error } = await supabase
+    .from('content_items')
+    .select('*')
+    .eq('platform', 'telegram')
+    .eq('status', 'draft')
+    .is('notified_at', null)
+    .order('scheduled_at', { ascending: true })
+    .limit(10);
+
+  if (error || !items || items.length === 0) return;
+
+  for (const item of items) {
+    try {
+      const when = item.scheduled_at ? new Date(item.scheduled_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : 'без даты';
+      const caption = `На утверждение (${item.topic || 'без темы'}), план на ${when} МСК:\n\n${item.body}`.slice(0, 1024);
+      const keyboard = { inline_keyboard: [[{ text: '✅ Утвердить', callback_data: `approve:${item.id}` }]] };
+      if (item.media_url) {
+        await bot.telegram.sendPhoto(OWNER_CHAT_ID, item.media_url, { caption, reply_markup: keyboard });
+      } else {
+        await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { reply_markup: keyboard });
+      }
+      await supabase.from('content_items').update({ notified_at: new Date().toISOString() }).eq('id', item.id);
+    } catch (err) {
+      console.log(`❌ Не удалось отправить на утверждение пост ${item.id}: ${err.message}`);
+    }
+  }
+}
+
+bot.action(/^approve:(.+)$/, async (ctx) => {
+  const id = ctx.match[1];
+  const { error } = await supabase.from('content_items').update({ status: 'scheduled' }).eq('id', id).eq('status', 'draft');
+  if (error) {
+    await ctx.answerCbQuery('Ошибка: ' + error.message, { show_alert: true });
+    return;
+  }
+  await ctx.answerCbQuery('Утверждено ✅');
+  try { await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: '✅ Утверждено', callback_data: 'noop' }]] }); } catch (_) {}
+});
+
+bot.action('noop', (ctx) => ctx.answerCbQuery());
+
 async function publishScheduledContent() {
   if (!CHANNEL_ID) return;
   const { data: items, error } = await supabase
@@ -126,4 +172,12 @@ if (CHANNEL_ID) {
   console.log('📤 Планировщик контент-завода запущен (проверка очереди раз в минуту)');
 } else {
   console.log('⚠️ TELEGRAM_CHANNEL_ID не задан — автопубликация в Telegram отключена');
+}
+
+if (OWNER_CHAT_ID) {
+  setInterval(notifyNewDrafts, 60 * 1000);
+  notifyNewDrafts();
+  console.log('📝 Отправка черновиков на утверждение владельцу включена');
+} else {
+  console.log('⚠️ OWNER_CHAT_ID не задан — черновики не будут приходить на утверждение в личку');
 }

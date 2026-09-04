@@ -117,7 +117,7 @@ export default async function handler(req, res) {
           topic: projectName,
           body: r.post.text,
           media_url: r.mediaUrl,
-          status: 'scheduled',
+          status: 'draft',
           scheduled_at: scheduledAt.toISOString()
         });
       });

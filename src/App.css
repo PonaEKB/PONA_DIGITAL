@@ -500,6 +500,18 @@
   letter-spacing: 2px;
 }
 
+.approval-banner {
+  max-width: 1100px;
+  margin: 0 auto 16px;
+  padding: 12px 18px;
+  background: rgba(251, 191, 36, 0.15);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  border-radius: 12px;
+  color: #fcd34d;
+  font-size: 14px;
+  text-align: center;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

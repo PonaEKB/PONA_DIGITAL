@@ -6,6 +6,7 @@ function App() {
   const [projects, setProjects] = useState([]);
   const [allTasks, setAllTasks] = useState([]);
   const [finances, setFinances] = useState([]);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [selectedProject, setSelectedProject] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [projectTab, setProjectTab] = useState('idea');
@@ -44,9 +45,11 @@ function App() {
     const { data: projectsData } = await supabase.from('projects').select('*').order('created_at', { ascending: false });
     const { data: tasksData } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
     const { data: financesData } = await supabase.from('finances').select('*').order('date', { ascending: false });
+    const { count: draftCount } = await supabase.from('content_items').select('id', { count: 'exact', head: true }).eq('status', 'draft');
     setProjects(projectsData || []);
     setAllTasks(tasksData || []);
     setFinances(financesData || []);
+    setPendingApprovalCount(draftCount || 0);
   }
 
   const PLATFORMS = [
@@ -497,6 +500,11 @@ function App() {
       {activeTab === 'dashboard' ? (
         <div className="dashboard">
           <h1 className="dashboard-title">Общая картина</h1>
+          {pendingApprovalCount > 0 && (
+            <div className="approval-banner">
+              📝 Ждут вашего утверждения: <strong>{pendingApprovalCount}</strong> {pendingApprovalCount === 1 ? 'пост' : 'постов'} — проверьте личные сообщения бота или раздел «Контент» нужного проекта.
+            </div>
+          )}
           <div className="stats-grid">
             <div className="stat-card"><img src="/icon/projects.png" alt="" className="stat-icon-img" /><span className="stat-value">{projects.length}</span><span className="stat-label">Проектов</span></div>
             <div className="stat-card"><img src="/icon/tasks.png" alt="" className="stat-icon-img" /><span className="stat-value">{totalTasks}</span><span className="stat-label">Всего задач</span></div>
