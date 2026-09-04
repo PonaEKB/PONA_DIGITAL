@@ -557,10 +557,11 @@ function App() {
                   <div className="project-section">
                     <h3>💡 Идея проекта</h3>
                     <p className="section-desc">AI поможет разработать концепцию, стратегию и монетизацию</p>
+                    <p className="section-hint">👉 Вы пишете: главный посыл и ключевые моменты идеи — для кого продукт, какую проблему решает, в чём фишка. AI предложит: варианты концепции, стратегии и монетизации.</p>
                     <div className="section-placeholder">
                       <textarea
                         className="idea-input"
-                        placeholder="Опишите идею или пожелания перед генерацией (необязательно)"
+                        placeholder="Например: сервис для поиска нянь с проверкой документов, ориентир на молодых родителей в крупных городах"
                         value={ideaPrompt}
                         onChange={(e) => setIdeaPrompt(e.target.value)}
                         disabled={aiLoading}
@@ -585,10 +586,11 @@ function App() {
                   <div className="project-section">
                     <h3>🔍 Анализ ниши</h3>
                     <p className="section-desc">AI собирает данные о трендах, конкурентах и фишках</p>
+                    <p className="section-hint">👉 Вы пишете: нишу и что важно учесть — регион, сегмент аудитории, известных конкурентов. AI предложит: варианты анализа трендов, конкурентов и точек роста.</p>
                     <div className="section-placeholder">
                       <textarea
                         className="idea-input"
-                        placeholder="Опишите, на чём сделать акцент в анализе (необязательно)"
+                        placeholder="Например: ниша доставки готовой еды для спортсменов, Москва, конкуренты — Grow Food"
                         value={analysisPrompt}
                         onChange={(e) => setAnalysisPrompt(e.target.value)}
                         disabled={aiLoading}
@@ -613,10 +615,11 @@ function App() {
                   <div className="project-section">
                     <h3>📋 Контент-план</h3>
                     <p className="section-desc">AI составит пошаговый план действий</p>
+                    <p className="section-hint">👉 Вы пишете: цели на месяц и ограничения — площадки, частота публикаций, темы, которые не подходят. AI предложит: варианты контент-плана по неделям.</p>
                     <div className="section-placeholder">
                       <textarea
                         className="idea-input"
-                        placeholder="Опишите пожелания к контент-плану (необязательно)"
+                        placeholder="Например: 3 поста в неделю в Telegram и VK, без тем про политику, акцент на кейсы клиентов"
                         value={planPrompt}
                         onChange={(e) => setPlanPrompt(e.target.value)}
                         disabled={aiLoading}

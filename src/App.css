@@ -367,6 +367,17 @@
   margin-bottom: 12px;
 }
 
+.section-hint {
+  font-size: 13px;
+  color: #9fc4f5;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
 .section-placeholder {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 12px;
