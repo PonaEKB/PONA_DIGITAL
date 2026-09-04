@@ -326,6 +326,39 @@ function App() {
     }
   }
 
+  async function generateChain() {
+    if (!selectedProject) return;
+    setAiLoading(true);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    try {
+      const ideaExtra = ideaPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${ideaPrompt.trim()}` : '';
+      const ideaAnswer = await askAI([
+        { role: 'system', content: 'Ты — бизнес-эксперт. Отвечай на русском.' },
+        { role: 'user', content: `Разработай подробную концепцию проекта "${selectedProject.name}"${selectedProject.description ? ': ' + selectedProject.description : ''}.${ideaExtra} Опиши: идею, стратегию, монетизацию, целевую аудиторию.` }
+      ], controller.signal);
+
+      const analysisExtra = analysisPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${analysisPrompt.trim()}` : '';
+      const analysisAnswer = await askAI([
+        { role: 'system', content: 'Ты — аналитик. Отвечай на русском.' },
+        { role: 'user', content: `Вот концепция проекта "${selectedProject.name}":\n\n${ideaAnswer}\n\nНа основе этой концепции сделай анализ ниши.${analysisExtra} Опиши: тренды, конкурентов, фишки, монетизацию.` }
+      ], controller.signal);
+
+      const planExtra = planPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${planPrompt.trim()}` : '';
+      const planAnswer = await askAI([
+        { role: 'system', content: 'Ты — контент-стратег. Отвечай на русском.' },
+        { role: 'user', content: `Вот концепция проекта:\n\n${ideaAnswer}\n\nИ анализ ниши:\n\n${analysisAnswer}\n\nНа основе этого составь контент-план для проекта "${selectedProject.name}" на месяц.${planExtra} Распиши по неделям: темы, форматы, площадки.` }
+      ], controller.signal);
+
+      alert(`💡 ИДЕЯ\n\n${ideaAnswer}\n\n\n🔍 АНАЛИЗ\n\n${analysisAnswer}\n\n\n📋 ПЛАН\n\n${planAnswer}`);
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
+    } finally {
+      abortControllerRef.current = null;
+      setAiLoading(false);
+    }
+  }
+
   if (loading) return <div className="loading">Загрузка...</div>;
 
   if (!user) {
@@ -425,7 +458,7 @@ function App() {
                     <span className="project-analytics-percent">{progress}%</span>
                   </div>
                   <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: progress + '%', background: project.color || '#a855f7' }}></div>
+                    <div className="progress-fill" style={{ width: progress + '%', background: project.color || '#38bdf8' }}></div>
                   </div>
                   <div className="project-analytics-stats">
                     <span>Всего: {projectTasks.length}</span>
@@ -496,6 +529,17 @@ function App() {
                   <button onClick={() => deleteProject(selectedProject.id)} className="delete-btn">🗑️</button>
                 </div>
                 {selectedProject.description && <p className="project-desc">{selectedProject.description}</p>}
+
+                <div className="section-actions" style={{ marginBottom: 16 }}>
+                  <button className="section-btn chain-btn" onClick={generateChain} disabled={aiLoading}>
+                    {aiLoading ? '⏳ Генерация...' : '🔗 Сгенерировать всё по цепочке (идея → анализ → план)'}
+                  </button>
+                  {aiLoading && (
+                    <button className="section-btn cancel-btn" onClick={cancelGeneration}>
+                      ✋ Отменить
+                    </button>
+                  )}
+                </div>
 
                 <div className="project-tabs">
                   {projectTabs.map((tab) => (
