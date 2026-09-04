@@ -1,27 +1,38 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
-const Anthropic = require('@anthropic-ai/sdk');
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY;
+const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
+const ROUTER_KEY = process.env.ROUTER_AI_KEY;
+const MODEL = 'anthropic/claude-opus-5';
 
 const bot = new Telegraf(TOKEN);
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function askAI(question) {
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-opus-5',
-      max_tokens: 4096,
-      system: 'Ты — AI-ассистент PONA DIGITAL. Отвечай на русском.',
-      messages: [{ role: 'user', content: question }]
+    const response = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${ROUTER_KEY}`
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 4096,
+        messages: [
+          { role: 'system', content: 'Ты — AI-ассистент PONA DIGITAL. Отвечай на русском.' },
+          { role: 'user', content: question }
+        ]
+      })
     });
-    const textBlock = response.content.find(b => b.type === 'text');
-    return textBlock ? textBlock.text : 'Ошибка: пустой ответ';
+    const data = await response.json();
+    if (!response.ok) return 'Ошибка: ' + (data.error?.message || JSON.stringify(data));
+    return data.choices?.[0]?.message?.content || 'Ошибка: пустой ответ';
   } catch (err) {
     return 'Ошибка: ' + err.message;
   }

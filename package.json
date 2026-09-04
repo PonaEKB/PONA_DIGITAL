@@ -13,11 +13,9 @@
     "start": "node bot.cjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.122.0",
     "@supabase/supabase-js": "^2.45.0",
     "dotenv": "^16.6.1",
     "node-telegram-bot-api": "^2.0.0",
-    "openai": "^7.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "telegraf": "^4.16.3"

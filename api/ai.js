@@ -1,6 +1,6 @@
-import Anthropic from '@anthropic-ai/sdk';
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
+const ROUTER_KEY = process.env.ROUTER_AI_KEY;
+const MODEL = 'anthropic/claude-opus-5';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -14,19 +14,25 @@ export default async function handler(req, res) {
     return;
   }
 
-  const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n') || undefined;
-  const conversation = messages.filter(m => m.role === 'user' || m.role === 'assistant');
-
   try {
-    const response = await client.messages.create({
-      model: 'claude-opus-5',
-      max_tokens: 4096,
-      system,
-      messages: conversation
+    const routerResponse = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${ROUTER_KEY}`
+      },
+      body: JSON.stringify({ model: MODEL, max_tokens: 4096, messages })
     });
-    const textBlock = response.content.find(b => b.type === 'text');
-    res.status(200).json({ choices: [{ message: { content: textBlock ? textBlock.text : '' } }] });
+
+    const data = await routerResponse.json();
+
+    if (!routerResponse.ok) {
+      res.status(routerResponse.status).json({ error: { message: data.error?.message || JSON.stringify(data) } });
+      return;
+    }
+
+    res.status(200).json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: { message: err.message } });
+    res.status(500).json({ error: { message: err.message } });
   }
 }
