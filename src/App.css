@@ -400,6 +400,38 @@
   box-shadow: 0 5px 20px rgba(168, 85, 247, 0.5);
 }
 
+.idea-input {
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 15px;
+  outline: none;
+  font-family: 'Dosis', sans-serif;
+  resize: vertical;
+}
+
+.idea-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.section-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.cancel-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 99, 99, 0.5);
+}
+
+.cancel-btn:hover {
+  box-shadow: 0 5px 20px rgba(255, 99, 99, 0.4);
+}
+
 .empty {
   color: #a0a0c0;
   text-align: center;

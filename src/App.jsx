@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import './App.css';
 
@@ -23,6 +23,10 @@ function App() {
   ]);
   const [aiInput, setAiInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [ideaPrompt, setIdeaPrompt] = useState('');
+  const [analysisPrompt, setAnalysisPrompt] = useState('');
+  const [planPrompt, setPlanPrompt] = useState('');
+  const abortControllerRef = useRef(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -214,12 +218,13 @@ function App() {
     }
   }
 
-  async function askAI(messages) {
+  async function askAI(messages, signal) {
     try {
       const response = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages })
+        body: JSON.stringify({ messages }),
+        signal
       });
       const data = await response.json();
       if (data.choices && data.choices[0]) {
@@ -230,8 +235,13 @@ function App() {
       }
       return 'Ошибка: неизвестный ответ от API';
     } catch (err) {
+      if (err.name === 'AbortError') throw err;
       return 'Ошибка при запросе: ' + err.message;
     }
+  }
+
+  function cancelGeneration() {
+    abortControllerRef.current?.abort();
   }
 
   async function sendAiMessage() {
@@ -259,34 +269,61 @@ function App() {
   async function generateIdea() {
     if (!selectedProject) return;
     setAiLoading(true);
-    const answer = await askAI([
-      { role: 'system', content: 'Ты — бизнес-эксперт. Отвечай на русском.' },
-      { role: 'user', content: `Разработай подробную концепцию проекта "${selectedProject.name}"${selectedProject.description ? ': ' + selectedProject.description : ''}. Опиши: идею, стратегию, монетизацию, целевую аудиторию.` }
-    ]);
-    alert(answer);
-    setAiLoading(false);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const extra = ideaPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${ideaPrompt.trim()}` : '';
+    try {
+      const answer = await askAI([
+        { role: 'system', content: 'Ты — бизнес-эксперт. Отвечай на русском.' },
+        { role: 'user', content: `Разработай подробную концепцию проекта "${selectedProject.name}"${selectedProject.description ? ': ' + selectedProject.description : ''}.${extra} Опиши: идею, стратегию, монетизацию, целевую аудиторию.` }
+      ], controller.signal);
+      alert(answer);
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
+    } finally {
+      abortControllerRef.current = null;
+      setAiLoading(false);
+    }
   }
 
   async function generateAnalysis() {
     if (!selectedProject) return;
     setAiLoading(true);
-    const answer = await askAI([
-      { role: 'system', content: 'Ты — аналитик. Отвечай на русском.' },
-      { role: 'user', content: `Сделай анализ ниши для проекта "${selectedProject.name}". Опиши: тренды, конкурентов, фишки, монетизацию.` }
-    ]);
-    alert(answer);
-    setAiLoading(false);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const extra = analysisPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${analysisPrompt.trim()}` : '';
+    try {
+      const answer = await askAI([
+        { role: 'system', content: 'Ты — аналитик. Отвечай на русском.' },
+        { role: 'user', content: `Сделай анализ ниши для проекта "${selectedProject.name}".${extra} Опиши: тренды, конкурентов, фишки, монетизацию.` }
+      ], controller.signal);
+      alert(answer);
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
+    } finally {
+      abortControllerRef.current = null;
+      setAiLoading(false);
+    }
   }
 
   async function generatePlan() {
     if (!selectedProject) return;
     setAiLoading(true);
-    const answer = await askAI([
-      { role: 'system', content: 'Ты — контент-стратег. Отвечай на русском.' },
-      { role: 'user', content: `Составь контент-план для проекта "${selectedProject.name}" на месяц. Распиши по неделям: темы, форматы, площадки.` }
-    ]);
-    alert(answer);
-    setAiLoading(false);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const extra = planPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${planPrompt.trim()}` : '';
+    try {
+      const answer = await askAI([
+        { role: 'system', content: 'Ты — контент-стратег. Отвечай на русском.' },
+        { role: 'user', content: `Составь контент-план для проекта "${selectedProject.name}" на месяц.${extra} Распиши по неделям: темы, форматы, площадки.` }
+      ], controller.signal);
+      alert(answer);
+    } catch (err) {
+      if (err.name !== 'AbortError') throw err;
+    } finally {
+      abortControllerRef.current = null;
+      setAiLoading(false);
+    }
   }
 
   if (loading) return <div className="loading">Загрузка...</div>;
@@ -477,10 +514,25 @@ function App() {
                     <h3>💡 Идея проекта</h3>
                     <p className="section-desc">AI поможет разработать концепцию, стратегию и монетизацию</p>
                     <div className="section-placeholder">
+                      <textarea
+                        className="idea-input"
+                        placeholder="Опишите идею или пожелания перед генерацией (необязательно)"
+                        value={ideaPrompt}
+                        onChange={(e) => setIdeaPrompt(e.target.value)}
+                        disabled={aiLoading}
+                        rows={3}
+                      />
                       <p>Нажми, чтобы AI разработал концепцию проекта</p>
-                      <button className="section-btn" onClick={generateIdea} disabled={aiLoading}>
-                        {aiLoading ? '⏳ Генерация...' : '🤖 Сгенерировать с AI'}
-                      </button>
+                      <div className="section-actions">
+                        <button className="section-btn" onClick={generateIdea} disabled={aiLoading}>
+                          {aiLoading ? '⏳ Генерация...' : '🤖 Сгенерировать с AI'}
+                        </button>
+                        {aiLoading && (
+                          <button className="section-btn cancel-btn" onClick={cancelGeneration}>
+                            ✋ Отменить
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -490,10 +542,25 @@ function App() {
                     <h3>🔍 Анализ ниши</h3>
                     <p className="section-desc">AI собирает данные о трендах, конкурентах и фишках</p>
                     <div className="section-placeholder">
+                      <textarea
+                        className="idea-input"
+                        placeholder="Опишите, на чём сделать акцент в анализе (необязательно)"
+                        value={analysisPrompt}
+                        onChange={(e) => setAnalysisPrompt(e.target.value)}
+                        disabled={aiLoading}
+                        rows={3}
+                      />
                       <p>Нажми, чтобы AI проанализировал нишу</p>
-                      <button className="section-btn" onClick={generateAnalysis} disabled={aiLoading}>
-                        {aiLoading ? '⏳ Анализ...' : '🤖 Запустить анализ'}
-                      </button>
+                      <div className="section-actions">
+                        <button className="section-btn" onClick={generateAnalysis} disabled={aiLoading}>
+                          {aiLoading ? '⏳ Анализ...' : '🤖 Запустить анализ'}
+                        </button>
+                        {aiLoading && (
+                          <button className="section-btn cancel-btn" onClick={cancelGeneration}>
+                            ✋ Отменить
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -503,10 +570,25 @@ function App() {
                     <h3>📋 Контент-план</h3>
                     <p className="section-desc">AI составит пошаговый план действий</p>
                     <div className="section-placeholder">
+                      <textarea
+                        className="idea-input"
+                        placeholder="Опишите пожелания к контент-плану (необязательно)"
+                        value={planPrompt}
+                        onChange={(e) => setPlanPrompt(e.target.value)}
+                        disabled={aiLoading}
+                        rows={3}
+                      />
                       <p>Нажми, чтобы AI составил контент-план</p>
-                      <button className="section-btn" onClick={generatePlan} disabled={aiLoading}>
-                        {aiLoading ? '⏳ План...' : '🤖 Создать план'}
-                      </button>
+                      <div className="section-actions">
+                        <button className="section-btn" onClick={generatePlan} disabled={aiLoading}>
+                          {aiLoading ? '⏳ План...' : '🤖 Создать план'}
+                        </button>
+                        {aiLoading && (
+                          <button className="section-btn cancel-btn" onClick={cancelGeneration}>
+                            ✋ Отменить
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
