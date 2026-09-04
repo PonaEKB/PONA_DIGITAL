@@ -722,6 +722,94 @@
   opacity: 0.7;
 }
 
+/* Предпросмотр поста в стиле Telegram */
+.tg-preview-modal {
+  width: 90%;
+  max-width: 400px;
+  animation: modalIn 0.3s ease-out;
+}
+
+.tg-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #eaf2ff;
+  font-size: 14px;
+  margin-bottom: 10px;
+  padding: 0 4px;
+}
+
+.tg-preview-card {
+  background: #17212b;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.tg-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.tg-preview-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4f7ff0, #38bdf8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.tg-preview-channel {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tg-preview-sub {
+  color: #6b8299;
+  font-size: 12px;
+}
+
+.tg-preview-image {
+  width: 100%;
+  display: block;
+  object-fit: cover;
+  max-height: 360px;
+}
+
+.tg-preview-no-image {
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  color: #6b8299;
+  font-size: 13px;
+  text-align: center;
+  padding: 20px;
+}
+
+.tg-preview-caption {
+  padding: 12px 14px 6px;
+  color: #e8edf1;
+  font-size: 14.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.tg-preview-meta {
+  padding: 0 14px 14px;
+  color: #6b8299;
+  font-size: 12px;
+  text-align: right;
+}
+
 /* Модальное окно AI */
 .modal-overlay {
   position: fixed;

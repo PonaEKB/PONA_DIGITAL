@@ -65,6 +65,7 @@ function App() {
   const [statsSnapshots, setStatsSnapshots] = useState([]);
   const [statsEvents, setStatsEvents] = useState([]);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [previewItem, setPreviewItem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [email, setEmail] = useState('');
@@ -834,7 +835,7 @@ function App() {
                         return (
                           <div key={item.id} className="content-item">
                             <span className="content-platform">{platform.icon} {platform.label}{!platform.live && <span className="content-platform-badge">черновик до API</span>}</span>
-                            {item.media_url && <img className="content-thumb" src={item.media_url} alt="" />}
+                            {item.media_url && <img className="content-thumb" src={item.media_url} alt="" onClick={() => setPreviewItem(item)} style={{ cursor: 'pointer' }} />}
                             <div className="content-body">
                               <span className="content-title">{item.title}</span>
                               <span className="content-text">{item.body}</span>
@@ -842,6 +843,7 @@ function App() {
                             </div>
                             <span className={`content-status status-${item.status}`}>{getContentStatusLabel(item.status)}</span>
                             <div className="content-actions">
+                              <button className="content-action-btn" onClick={() => setPreviewItem(item)}>👁 Просмотр</button>
                               {item.status === 'draft' && <button className="content-action-btn" onClick={() => scheduleContentItem(item)}>⏳ В очередь</button>}
                               {(item.status === 'scheduled' || item.status === 'failed') && <button className="content-action-btn" onClick={() => publishNow(item)}>🚀 Опубликовать</button>}
                               <button className="content-action-btn delete" onClick={() => deleteContentItem(item.id)}>🗑️</button>
@@ -878,11 +880,10 @@ function App() {
                                 </span>
                               </div>
                               <span className={`content-status status-${item.status}`}>{getContentStatusLabel(item.status)}</span>
-                              {item.status !== 'published' && (
-                                <div className="content-actions">
-                                  <button className="content-action-btn" onClick={() => publishNow(item)}>🚀 Сейчас</button>
-                                </div>
-                              )}
+                              <div className="content-actions">
+                                <button className="content-action-btn" onClick={() => setPreviewItem(item)}>👁 Просмотр</button>
+                                {item.status !== 'published' && <button className="content-action-btn" onClick={() => publishNow(item)}>🚀 Сейчас</button>}
+                              </div>
                             </div>
                           );
                         })}
@@ -983,6 +984,39 @@ function App() {
               </div>
             )}
           </main>
+        </div>
+      )}
+
+      {previewItem && (
+        <div className="modal-overlay" onClick={() => setPreviewItem(null)}>
+          <div className="tg-preview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="tg-preview-toolbar">
+              <span>Предпросмотр поста</span>
+              <button className="modal-close" onClick={() => setPreviewItem(null)}>✕</button>
+            </div>
+            <div className="tg-preview-card">
+              <div className="tg-preview-header">
+                <span className="tg-preview-avatar">🍽️</span>
+                <div>
+                  <div className="tg-preview-channel">{selectedProject?.name || 'Канал'}</div>
+                  <div className="tg-preview-sub">канал</div>
+                </div>
+              </div>
+              {previewItem.media_url ? (
+                <img className="tg-preview-image" src={previewItem.media_url} alt="" />
+              ) : (
+                <div className="tg-preview-image tg-preview-no-image">Картинка ещё не сгенерирована</div>
+              )}
+              <div className="tg-preview-caption">{previewItem.body}</div>
+              <div className="tg-preview-meta">
+                {previewItem.status === 'published' && previewItem.published_at
+                  ? `Опубликовано: ${new Date(previewItem.published_at).toLocaleString('ru-RU')}`
+                  : previewItem.scheduled_at
+                    ? `План: ${new Date(previewItem.scheduled_at).toLocaleString('ru-RU')}`
+                    : 'Без даты'}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
