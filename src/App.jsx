@@ -2,6 +2,55 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import './App.css';
 
+function SubscriberChart({ snapshots }) {
+  const width = 720;
+  const height = 220;
+  const padding = { top: 16, right: 16, bottom: 28, left: 44 };
+  const plotW = width - padding.left - padding.right;
+  const plotH = height - padding.top - padding.bottom;
+
+  const values = snapshots.map(s => s.subscriber_count);
+  const times = snapshots.map(s => new Date(s.captured_at).getTime());
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  const rangeV = (maxV - minV) || 1;
+  const minT = Math.min(...times);
+  const maxT = Math.max(...times);
+  const rangeT = (maxT - minT) || 1;
+
+  const points = snapshots.map(s => {
+    const t = new Date(s.captured_at).getTime();
+    const x = padding.left + ((t - minT) / rangeT) * plotW;
+    const y = padding.top + plotH - ((s.subscriber_count - minV) / rangeV) * plotH;
+    return { x, y, v: s.subscriber_count, date: new Date(s.captured_at) };
+  });
+
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const gridLines = [0, 0.5, 1].map(f => padding.top + plotH * f);
+  const gridLabels = [maxV, Math.round((maxV + minV) / 2), minV];
+
+  return (
+    <div className="chart-wrap">
+      <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="График числа подписчиков за 30 дней">
+        {gridLines.map((y, i) => (
+          <g key={i}>
+            <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} className="chart-grid-line" />
+            <text x={padding.left - 8} y={y + 4} className="chart-axis-label" textAnchor="end">{gridLabels[i]}</text>
+          </g>
+        ))}
+        <path d={linePath} className="chart-line" fill="none" />
+        {points.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r="4" className="chart-dot">
+            <title>{p.date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: {p.v} подписчиков</title>
+          </circle>
+        ))}
+        <text x={padding.left} y={height - 6} className="chart-axis-label">{points[0]?.date.toLocaleDateString('ru-RU')}</text>
+        <text x={width - padding.right} y={height - 6} className="chart-axis-label" textAnchor="end">{points[points.length - 1]?.date.toLocaleDateString('ru-RU')}</text>
+      </svg>
+    </div>
+  );
+}
+
 function App() {
   const [projects, setProjects] = useState([]);
   const [allTasks, setAllTasks] = useState([]);
@@ -13,6 +62,9 @@ function App() {
   const [projectContent, setProjectContent] = useState([]);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentFilter, setContentFilter] = useState('all');
+  const [statsSnapshots, setStatsSnapshots] = useState([]);
+  const [statsEvents, setStatsEvents] = useState([]);
+  const [statsLoading, setStatsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [email, setEmail] = useState('');
@@ -108,6 +160,18 @@ function App() {
     }
     await supabase.from('content_items').insert({ project_id: selectedProject.id, platform, title, body, status, scheduled_at });
     loadProjectContent(selectedProject.id);
+  }
+
+  async function loadProjectStats(projectId) {
+    setStatsLoading(true);
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const [{ data: snapshots }, { data: events }] = await Promise.all([
+      supabase.from('channel_stats_snapshots').select('*').eq('project_id', projectId).gte('captured_at', since).order('captured_at', { ascending: true }),
+      supabase.from('channel_member_events').select('*').eq('project_id', projectId).gte('occurred_at', since).order('occurred_at', { ascending: true })
+    ]);
+    setStatsSnapshots(snapshots || []);
+    setStatsEvents(events || []);
+    setStatsLoading(false);
   }
 
   async function deleteContentItem(id) {
@@ -630,7 +694,7 @@ function App() {
                     <button
                       key={tab.id}
                       className={`project-tab-btn ${projectTab === tab.id ? 'active' : ''}`}
-                      onClick={() => setProjectTab(tab.id)}
+                      onClick={() => { setProjectTab(tab.id); if (tab.id === 'stats') loadProjectStats(selectedProject.id); }}
                     >
                       <span>{tab.icon}</span> {tab.label}
                     </button>
@@ -829,11 +893,75 @@ function App() {
                 {projectTab === 'stats' && (
                   <div className="project-section">
                     <h3>📊 Статистика</h3>
-                    <p className="section-desc">Подписчики, просмотры, лайки, комментарии</p>
-                    <div className="section-placeholder">
-                      <p>Здесь будет статистика по всем метрикам</p>
-                      <button className="section-btn">📊 Обновить данные</button>
+                    <p className="section-desc">Подписчики канала — реальные данные из Telegram (снимок раз в час + учёт вступлений/выходов)</p>
+                    <p className="section-hint">ℹ️ Просмотры постов Telegram Bot API боту не отдаёт — это доступно только во встроенной аналитике Telegram внутри самого приложения (Настройки канала → Статистика), не через ботов.</p>
+
+                    <div className="section-actions" style={{ marginBottom: 16 }}>
+                      <button className="section-btn" onClick={() => loadProjectStats(selectedProject.id)} disabled={statsLoading}>
+                        {statsLoading ? '⏳ Обновляю...' : '🔄 Обновить данные'}
+                      </button>
                     </div>
+
+                    {statsSnapshots.length === 0 ? (
+                      <p className="empty">Пока нет данных — бот снимает число подписчиков раз в час, зайдите позже.</p>
+                    ) : (
+                      <>
+                        {(() => {
+                          const now = Date.now();
+                          const current = statsSnapshots[statsSnapshots.length - 1].subscriber_count;
+                          const dayAgo = statsSnapshots.find(s => new Date(s.captured_at).getTime() >= now - 24 * 3600 * 1000);
+                          const weekAgo = statsSnapshots.find(s => new Date(s.captured_at).getTime() >= now - 7 * 24 * 3600 * 1000);
+                          const growth24h = dayAgo ? current - dayAgo.subscriber_count : 0;
+                          const growth7d = weekAgo ? current - weekAgo.subscriber_count : 0;
+                          const countIn = (hours) => statsEvents.filter(e => e.event_type === 'joined' && new Date(e.occurred_at).getTime() >= now - hours * 3600 * 1000).length;
+                          const countOut = (hours) => statsEvents.filter(e => e.event_type === 'left' && new Date(e.occurred_at).getTime() >= now - hours * 3600 * 1000).length;
+                          const joinedWeek = countIn(24 * 7);
+                          const leftWeek = countOut(24 * 7);
+                          const joinedMonth = countIn(24 * 30);
+                          const leftMonth = countOut(24 * 30);
+
+                          return (
+                            <>
+                              <div className="stats-mini-grid">
+                                <div className="stat-mini-card">
+                                  <span className="stat-mini-value">{current}</span>
+                                  <span className="stat-mini-label">Подписчиков сейчас</span>
+                                </div>
+                                <div className="stat-mini-card">
+                                  <span className={`stat-mini-value ${growth7d >= 0 ? 'positive' : 'negative'}`}>{growth7d >= 0 ? '+' : ''}{growth7d}</span>
+                                  <span className="stat-mini-label">Прирост за 7 дней</span>
+                                </div>
+                                <div className="stat-mini-card">
+                                  <span className={`stat-mini-value ${growth24h >= 0 ? 'positive' : 'negative'}`}>{growth24h >= 0 ? '+' : ''}{growth24h}</span>
+                                  <span className="stat-mini-label">Прирост за 24 часа</span>
+                                </div>
+                              </div>
+
+                              <div className="stats-mini-grid">
+                                <div className="stat-mini-card">
+                                  <span className="stat-mini-value positive">➕ {joinedWeek}</span>
+                                  <span className="stat-mini-label">Вступили за неделю</span>
+                                </div>
+                                <div className="stat-mini-card">
+                                  <span className="stat-mini-value negative">➖ {leftWeek}</span>
+                                  <span className="stat-mini-label">Отписались за неделю</span>
+                                </div>
+                                <div className="stat-mini-card">
+                                  <span className="stat-mini-value positive">➕ {joinedMonth}</span>
+                                  <span className="stat-mini-label">Вступили за месяц</span>
+                                </div>
+                                <div className="stat-mini-card">
+                                  <span className="stat-mini-value negative">➖ {leftMonth}</span>
+                                  <span className="stat-mini-label">Отписались за месяц</span>
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
+
+                        <SubscriberChart snapshots={statsSnapshots} />
+                      </>
+                    )}
                   </div>
                 )}
 

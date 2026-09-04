@@ -14,6 +14,8 @@ const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const MODEL = 'anthropic/claude-opus-5';
 const IMAGE_MODEL = 'krea/krea-2-medium-turbo';
 const MEDIA_BUCKET = 'content-media';
+// Проект, к которому относится CHANNEL_ID — статистика подписчиков привязывается к нему.
+const STATS_PROJECT_ID = process.env.TELEGRAM_PROJECT_ID;
 
 const bot = new Telegraf(TOKEN);
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -193,6 +195,34 @@ bot.action(/^reject:(.+)$/, async (ctx) => {
 
 bot.action('noop', (ctx) => ctx.answerCbQuery());
 
+async function captureSubscriberSnapshot() {
+  if (!CHANNEL_ID || !STATS_PROJECT_ID) return;
+  try {
+    const count = await bot.telegram.getChatMemberCount(CHANNEL_ID);
+    await supabase.from('channel_stats_snapshots').insert({ project_id: STATS_PROJECT_ID, subscriber_count: count });
+  } catch (err) {
+    console.log(`⚠️ Не удалось снять снимок подписчиков: ${err.message}`);
+  }
+}
+
+const MEMBER_STATUSES = ['member', 'administrator', 'creator', 'restricted'];
+
+bot.on('chat_member', async (ctx) => {
+  if (!STATS_PROJECT_ID) return;
+  const update = ctx.update.chat_member;
+  const wasMember = MEMBER_STATUSES.includes(update.old_chat_member.status);
+  const isMember = MEMBER_STATUSES.includes(update.new_chat_member.status);
+  if (wasMember === isMember) return;
+
+  const eventType = isMember ? 'joined' : 'left';
+  await supabase.from('channel_member_events').insert({
+    project_id: STATS_PROJECT_ID,
+    telegram_user_id: update.new_chat_member.user.id,
+    event_type: eventType,
+    occurred_at: new Date(update.date * 1000).toISOString()
+  });
+});
+
 async function publishScheduledContent() {
   if (!CHANNEL_ID) return;
   const { data: items, error } = await supabase
@@ -228,13 +258,21 @@ bot.catch((err, ctx) => {
 });
 
 function startBot() {
-  bot.launch().catch(err => {
+  bot.launch({ allowedUpdates: ['message', 'callback_query', 'chat_member'] }).catch(err => {
     console.error('❌ Ошибка поллинга бота, повтор через 5с:', err.message);
     setTimeout(startBot, 5000);
   });
 }
 startBot();
 console.log('🤖 Бот PONA DIGITAL + Claude запущен!');
+
+if (CHANNEL_ID && STATS_PROJECT_ID) {
+  setInterval(captureSubscriberSnapshot, 60 * 60 * 1000);
+  captureSubscriberSnapshot();
+  console.log('📈 Снимки числа подписчиков включены (раз в час) + учёт вступлений/выходов');
+} else if (CHANNEL_ID) {
+  console.log('⚠️ TELEGRAM_PROJECT_ID не задан — статистика подписчиков отключена');
+}
 
 if (CHANNEL_ID) {
   setInterval(publishScheduledContent, 60 * 1000);

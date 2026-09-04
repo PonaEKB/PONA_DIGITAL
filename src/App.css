@@ -367,6 +367,75 @@
   margin-bottom: 12px;
 }
 
+.stats-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.stat-mini-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+
+.stat-mini-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: #eaf2ff;
+}
+
+.stat-mini-value.positive { color: #4ade80; }
+.stat-mini-value.negative { color: #f87171; }
+
+.stat-mini-label {
+  font-size: 12px;
+  color: #9fb8dd;
+}
+
+.chart-wrap {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.chart-grid-line {
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+}
+
+.chart-axis-label {
+  fill: #9fb8dd;
+  font-size: 11px;
+  font-family: 'Dosis', sans-serif;
+}
+
+.chart-line {
+  stroke: #38bdf8;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-dot {
+  fill: #38bdf8;
+  stroke: #1e2f52;
+  stroke-width: 1.5;
+}
+
 .section-result {
   margin-top: 14px;
   padding: 16px 18px;
