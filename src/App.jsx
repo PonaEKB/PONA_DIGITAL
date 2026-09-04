@@ -26,6 +26,9 @@ function App() {
   const [ideaPrompt, setIdeaPrompt] = useState('');
   const [analysisPrompt, setAnalysisPrompt] = useState('');
   const [competitorChannels, setCompetitorChannels] = useState('');
+  const [ideaResult, setIdeaResult] = useState('');
+  const [analysisResult, setAnalysisResult] = useState('');
+  const [planResult, setPlanResult] = useState('');
   const [planPrompt, setPlanPrompt] = useState('');
   const abortControllerRef = useRef(null);
 
@@ -302,7 +305,7 @@ function App() {
         { role: 'system', content: 'Ты — бизнес-эксперт. Отвечай на русском.' },
         { role: 'user', content: `Разработай подробную концепцию проекта "${selectedProject.name}"${selectedProject.description ? ': ' + selectedProject.description : ''}.${extra} Опиши: идею, стратегию, монетизацию, целевую аудиторию.` }
       ], controller.signal);
-      alert(answer);
+      setIdeaResult(answer);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -327,7 +330,7 @@ function App() {
         { role: 'user', content: `Сделай анализ ниши для проекта "${selectedProject.name}".${extra}${competitorBlock} Опиши: тренды, конкурентов, фишки, монетизацию.` }
       ], controller.signal);
       const errorNote = errors.length ? `\n\n⚠️ Не удалось получить данные по каналам: ${errors.join('; ')}` : '';
-      alert(answer + errorNote);
+      setAnalysisResult(answer + errorNote);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -341,13 +344,16 @@ function App() {
     setAiLoading(true);
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    const extra = planPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${planPrompt.trim()}` : '';
     try {
+      const extra = planPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${planPrompt.trim()}` : '';
+      const contextBlock = (ideaResult || analysisResult)
+        ? `\n\nКонтекст по проекту, уже собранный ранее:${ideaResult ? `\n\nИдея и концепция:\n${ideaResult}` : ''}${analysisResult ? `\n\nАнализ ниши и конкурентов:\n${analysisResult}` : ''}`
+        : '';
       const answer = await askAI([
-        { role: 'system', content: 'Ты — контент-стратег. Отвечай на русском.' },
-        { role: 'user', content: `Составь контент-план для проекта "${selectedProject.name}" на месяц.${extra} Распиши по неделям: темы, форматы, площадки.` }
+        { role: 'system', content: 'Ты — контент-стратег и эксперт по развитию Telegram-каналов. Отвечай на русском.' },
+        { role: 'user', content: `Составь полную стратегию развития Telegram-канала для проекта "${selectedProject.name}", опираясь на идею и анализ ниши/конкурентов.${extra}${contextBlock} Опиши подробно: 1) стратегию развития канала; 2) варианты монетизации — на чём конкретно можно зарабатывать; 3) как привлекать и приглашать подписчиков, откуда брать первую аудиторию; 4) контент-план на месяц по неделям — темы, форматы, площадки.` }
       ], controller.signal);
-      alert(answer);
+      setPlanResult(answer);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -367,6 +373,7 @@ function App() {
         { role: 'system', content: 'Ты — бизнес-эксперт. Отвечай на русском.' },
         { role: 'user', content: `Разработай подробную концепцию проекта "${selectedProject.name}"${selectedProject.description ? ': ' + selectedProject.description : ''}.${ideaExtra} Опиши: идею, стратегию, монетизацию, целевую аудиторию.` }
       ], controller.signal);
+      setIdeaResult(ideaAnswer);
 
       const { context: competitorContext } = await fetchCompetitorPosts(controller.signal);
       const analysisExtra = analysisPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${analysisPrompt.trim()}` : '';
@@ -377,14 +384,14 @@ function App() {
         { role: 'system', content: 'Ты — аналитик. Отвечай на русском.' },
         { role: 'user', content: `Вот концепция проекта "${selectedProject.name}":\n\n${ideaAnswer}\n\nНа основе этой концепции сделай анализ ниши.${analysisExtra}${competitorBlock} Опиши: тренды, конкурентов, фишки, монетизацию.` }
       ], controller.signal);
+      setAnalysisResult(analysisAnswer);
 
       const planExtra = planPrompt.trim() ? `\n\nДополнительные пожелания от пользователя: ${planPrompt.trim()}` : '';
       const planAnswer = await askAI([
-        { role: 'system', content: 'Ты — контент-стратег. Отвечай на русском.' },
-        { role: 'user', content: `Вот концепция проекта:\n\n${ideaAnswer}\n\nИ анализ ниши:\n\n${analysisAnswer}\n\nНа основе этого составь контент-план для проекта "${selectedProject.name}" на месяц.${planExtra} Распиши по неделям: темы, форматы, площадки.` }
+        { role: 'system', content: 'Ты — контент-стратег и эксперт по развитию Telegram-каналов. Отвечай на русском.' },
+        { role: 'user', content: `Вот концепция проекта:\n\n${ideaAnswer}\n\nИ анализ ниши/конкурентов:\n\n${analysisAnswer}\n\nНа основе этого составь полную стратегию развития Telegram-канала для проекта "${selectedProject.name}".${planExtra} Опиши подробно: 1) стратегию развития канала; 2) варианты монетизации — на чём конкретно можно зарабатывать; 3) как привлекать и приглашать подписчиков, откуда брать первую аудиторию; 4) контент-план на месяц по неделям — темы, форматы, площадки.` }
       ], controller.signal);
-
-      alert(`💡 ИДЕЯ\n\n${ideaAnswer}\n\n\n🔍 АНАЛИЗ\n\n${analysisAnswer}\n\n\n📋 ПЛАН\n\n${planAnswer}`);
+      setPlanResult(planAnswer);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -545,7 +552,7 @@ function App() {
             </div>
             <div className="project-list">
               {projects.map((project) => (
-                <div key={project.id} className={`project-item ${selectedProject?.id === project.id ? 'active' : ''}`} onClick={() => { setSelectedProject(project); setProjectTab('idea'); loadProjectContent(project.id); }}>
+                <div key={project.id} className={`project-item ${selectedProject?.id === project.id ? 'active' : ''}`} onClick={() => { setSelectedProject(project); setProjectTab('idea'); loadProjectContent(project.id); setIdeaResult(''); setAnalysisResult(''); setPlanResult(''); }}>
                   <span className="project-color" style={{ background: project.color || '#667eea' }}></span>
                   <span className="project-name">{project.name}</span>
                   <span className="project-status">{getStatusLabel(project.status)}</span>
@@ -613,6 +620,7 @@ function App() {
                         )}
                       </div>
                     </div>
+                    {ideaResult && <div className="section-result">{ideaResult}</div>}
                   </div>
                 )}
 
@@ -650,14 +658,20 @@ function App() {
                         )}
                       </div>
                     </div>
+                    {analysisResult && <div className="section-result">{analysisResult}</div>}
                   </div>
                 )}
 
                 {projectTab === 'plan' && (
                   <div className="project-section">
                     <h3>📋 Контент-план</h3>
-                    <p className="section-desc">AI составит пошаговый план действий</p>
-                    <p className="section-hint">👉 Вы пишете: цели на месяц и ограничения — площадки, частота публикаций, темы, которые не подходят. AI предложит: варианты контент-плана по неделям.</p>
+                    <p className="section-desc">AI составит стратегию развития канала на основе идеи и анализа</p>
+                    <p className="section-hint">👉 Строится на идее и анализе конкурентов/трендов (если вы их уже сгенерировали — они подставятся автоматически). AI предложит: стратегию развития канала, варианты монетизации, как привлекать подписчиков, и контент-план по неделям.</p>
+                    {(ideaResult || analysisResult) && (
+                      <p className="section-hint" style={{ borderColor: 'rgba(74, 222, 128, 0.4)', background: 'rgba(74, 222, 128, 0.08)', color: '#86efac' }}>
+                        ✅ Учтено: {ideaResult ? 'идея проекта' : ''}{ideaResult && analysisResult ? ' + ' : ''}{analysisResult ? 'анализ ниши/конкурентов' : ''}
+                      </p>
+                    )}
                     <div className="section-placeholder">
                       <textarea
                         className="idea-input"
@@ -667,10 +681,10 @@ function App() {
                         disabled={aiLoading}
                         rows={3}
                       />
-                      <p>Нажми, чтобы AI составил контент-план</p>
+                      <p>Нажми, чтобы AI составил стратегию и контент-план</p>
                       <div className="section-actions">
                         <button className="section-btn" onClick={generatePlan} disabled={aiLoading}>
-                          {aiLoading ? '⏳ План...' : '🤖 Создать план'}
+                          {aiLoading ? '⏳ Генерация...' : '🤖 Создать стратегию и план'}
                         </button>
                         {aiLoading && (
                           <button className="section-btn cancel-btn" onClick={cancelGeneration}>
@@ -679,6 +693,7 @@ function App() {
                         )}
                       </div>
                     </div>
+                    {planResult && <div className="section-result">{planResult}</div>}
                   </div>
                 )}
 
