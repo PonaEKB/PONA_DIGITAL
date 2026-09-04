@@ -12,6 +12,8 @@ const OWNER_CHAT_ID = process.env.OWNER_CHAT_ID;
 const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
 const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const MODEL = 'anthropic/claude-opus-5';
+const IMAGE_MODEL = 'krea/krea-2-medium-turbo';
+const MEDIA_BUCKET = 'content-media';
 
 const bot = new Telegraf(TOKEN);
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -92,6 +94,27 @@ bot.command('post', async (ctx) => {
 
 const MAX_PENDING_APPROVAL = 12; // держим в очереди на утверждение не больше ~3 дней контента разом
 
+async function generateAndUploadImage(id, prompt) {
+  const genRes = await fetch(`${ROUTER_BASE_URL}/images/generations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
+    body: JSON.stringify({ model: IMAGE_MODEL, prompt, n: 1, size: '1024x1024' })
+  });
+  const genData = await genRes.json();
+  if (!genRes.ok) throw new Error(genData.error?.message || JSON.stringify(genData));
+  const item = genData.data?.[0];
+  if (!item?.b64_json) throw new Error('Пустой ответ генератора изображений');
+
+  const mediaType = item.media_type || 'image/png';
+  const ext = mediaType.includes('png') ? 'png' : mediaType.includes('webp') ? 'webp' : 'jpg';
+  const path = `${id}/jit-${Date.now()}.${ext}`;
+  const buffer = Buffer.from(item.b64_json, 'base64');
+  const { error: upErr } = await supabase.storage.from(MEDIA_BUCKET).upload(path, buffer, { contentType: mediaType });
+  if (upErr) throw new Error(upErr.message);
+  const { data: pub } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
+  return pub.publicUrl;
+}
+
 async function notifyNewDrafts() {
   if (!OWNER_CHAT_ID) return;
 
@@ -118,14 +141,24 @@ async function notifyNewDrafts() {
 
   for (const item of items) {
     try {
+      let mediaUrl = item.media_url;
+      if (!mediaUrl && item.image_prompt) {
+        try {
+          mediaUrl = await generateAndUploadImage(item.id, item.image_prompt);
+          await supabase.from('content_items').update({ media_url: mediaUrl }).eq('id', item.id);
+        } catch (imgErr) {
+          console.log(`⚠️ Не удалось сгенерировать картинку для ${item.id}: ${imgErr.message}`);
+        }
+      }
+
       const when = item.scheduled_at ? new Date(item.scheduled_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : 'без даты';
       const caption = `На утверждение (${item.topic || 'без темы'}), план на ${when} МСК:\n\n${item.body}`.slice(0, 1024);
       const keyboard = { inline_keyboard: [[
         { text: '✅ Утвердить', callback_data: `approve:${item.id}` },
         { text: '❌ Отклонить', callback_data: `reject:${item.id}` }
       ]] };
-      if (item.media_url) {
-        await bot.telegram.sendPhoto(OWNER_CHAT_ID, item.media_url, { caption, reply_markup: keyboard });
+      if (mediaUrl) {
+        await bot.telegram.sendPhoto(OWNER_CHAT_ID, mediaUrl, { caption, reply_markup: keyboard });
       } else {
         await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { reply_markup: keyboard });
       }

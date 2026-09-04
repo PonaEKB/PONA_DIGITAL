@@ -3,8 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
 const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const TEXT_MODEL = 'anthropic/claude-opus-5';
-const IMAGE_MODEL = 'krea/krea-2-medium-turbo';
-const BUCKET = 'content-media';
 const POST_HOURS_UTC = [9, 13, 17, 21];
 
 const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -37,41 +35,6 @@ async function generatePostsText({ projectName, context, days, postsPerDay }) {
   return parsed;
 }
 
-async function generateImage(prompt) {
-  const data = await callRouter('/images/generations', {
-    model: IMAGE_MODEL,
-    prompt,
-    n: 1,
-    size: '1024x1024'
-  });
-  const item = data.data?.[0];
-  if (!item?.b64_json) throw new Error('Пустой ответ генератора изображений');
-  return { base64: item.b64_json, mediaType: item.media_type || 'image/png' };
-}
-
-async function uploadImage(projectId, index, base64, mediaType) {
-  const ext = mediaType.includes('png') ? 'png' : mediaType.includes('webp') ? 'webp' : 'jpg';
-  const path = `${projectId}/${Date.now()}-${index}.${ext}`;
-  const buffer = Buffer.from(base64, 'base64');
-  const { error } = await supabase.storage.from(BUCKET).upload(path, buffer, { contentType: mediaType, upsert: false });
-  if (error) throw new Error(error.message);
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-  return data.publicUrl;
-}
-
-async function mapWithConcurrency(items, limit, fn) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  async function worker() {
-    while (cursor < items.length) {
-      const current = cursor++;
-      results[current] = await fn(items[current], current);
-    }
-  }
-  await Promise.all(new Array(Math.min(limit, items.length)).fill(0).map(worker));
-  return results;
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -85,29 +48,22 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Генерируем только текст и промпт для картинки. Сама картинка создаётся
+    // не здесь, а в bot.cjs — прямо перед отправкой поста владельцу на
+    // утверждение (и только для ближайшей пачки, а не для всех разом).
     const posts = await generatePostsText({ projectName, context: context || '', days, postsPerDay });
 
-    const results = await mapWithConcurrency(posts, 4, async (post) => {
-      try {
-        const { base64, mediaType } = await generateImage(post.image_prompt);
-        const mediaUrl = await uploadImage(projectId, Math.random().toString(36).slice(2), base64, mediaType);
-        return { ok: true, post, mediaUrl };
-      } catch (err) {
-        return { ok: false, post, error: err.message };
-      }
-    });
-
     const grouped = {};
-    for (const r of results.filter(r => r.ok)) {
-      const day = r.post.day >= 1 ? r.post.day : 1;
-      (grouped[day] = grouped[day] || []).push(r);
+    for (const post of posts) {
+      const day = post.day >= 1 ? post.day : 1;
+      (grouped[day] = grouped[day] || []).push(post);
     }
 
     const now = new Date();
     const rows = [];
     for (const [dayStr, items] of Object.entries(grouped)) {
       const day = parseInt(dayStr, 10);
-      items.forEach((r, idx) => {
+      items.forEach((post, idx) => {
         const scheduledAt = new Date(now);
         scheduledAt.setUTCDate(scheduledAt.getUTCDate() + day);
         scheduledAt.setUTCHours(POST_HOURS_UTC[idx % POST_HOURS_UTC.length], 0, 0, 0);
@@ -115,8 +71,8 @@ export default async function handler(req, res) {
           project_id: projectId,
           platform: 'telegram',
           topic: projectName,
-          body: r.post.text,
-          media_url: r.mediaUrl,
+          body: post.text,
+          image_prompt: post.image_prompt || null,
           status: 'draft',
           scheduled_at: scheduledAt.toISOString()
         });
@@ -130,8 +86,7 @@ export default async function handler(req, res) {
       inserted = data?.length || 0;
     }
 
-    const failed = results.filter(r => !r.ok).map(r => r.error);
-    res.status(200).json({ inserted, failed, totalRequested: posts.length });
+    res.status(200).json({ inserted, totalRequested: posts.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
