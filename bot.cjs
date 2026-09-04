@@ -163,7 +163,17 @@ async function publishScheduledContent() {
   }
 }
 
-bot.launch();
+bot.catch((err, ctx) => {
+  console.error(`❌ Ошибка обработчика (${ctx.updateType}):`, err.message);
+});
+
+function startBot() {
+  bot.launch().catch(err => {
+    console.error('❌ Ошибка поллинга бота, повтор через 5с:', err.message);
+    setTimeout(startBot, 5000);
+  });
+}
+startBot();
 console.log('🤖 Бот PONA DIGITAL + Claude запущен!');
 
 if (CHANNEL_ID) {
