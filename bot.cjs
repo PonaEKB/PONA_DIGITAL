@@ -198,7 +198,7 @@ bot.action('noop', (ctx) => ctx.answerCbQuery());
 async function captureSubscriberSnapshot() {
   if (!CHANNEL_ID || !STATS_PROJECT_ID) return;
   try {
-    const count = await bot.telegram.getChatMemberCount(CHANNEL_ID);
+    const count = await bot.telegram.getChatMembersCount(CHANNEL_ID);
     await supabase.from('channel_stats_snapshots').insert({ project_id: STATS_PROJECT_ID, subscriber_count: count });
   } catch (err) {
     console.log(`⚠️ Не удалось снять снимок подписчиков: ${err.message}`);
