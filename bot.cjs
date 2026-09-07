@@ -407,7 +407,9 @@ bot.on('text', async (ctx) => {
   }
 
   await ctx.sendChatAction('typing');
+  const thinking = await ctx.reply('🤔 Думаю...');
   await runAgent(ctx, text);
+  try { await ctx.deleteMessage(thinking.message_id); } catch (_) {}
 });
 
 const MAX_PENDING_APPROVAL = 12; // держим в очереди на утверждение не больше ~3 дней контента разом
@@ -460,7 +462,16 @@ async function notifyNewDrafts() {
 
     if (error || !items || items.length === 0) return;
 
+    // Генерация картинки — тяжёлый запрос к тому же AI-провайдеру, что и живой чат с
+    // владельцем; если гнать их пачкой, конкурентный чат-запрос может встать в очередь
+    // на десятки секунд-минуты. Поэтому на один цикл (раз в минуту) — не больше одной
+    // новой генерации картинки, остальные посты дождутся следующих циклов.
+    const MAX_IMAGES_PER_CYCLE = 1;
+    let imagesGenerated = 0;
+
     for (const item of items) {
+      if (!item.media_url && item.image_prompt && imagesGenerated >= MAX_IMAGES_PER_CYCLE) continue;
+
       try {
         // Сразу помечаем как "в обработке" (условно, по notified_at IS NULL) — если строку уже
         // забрал другой запуск, claimed.length будет 0 и мы просто пропустим пост, не отправляя дубль.
@@ -476,6 +487,7 @@ async function notifyNewDrafts() {
         if (!mediaUrl && item.image_prompt) {
           try {
             mediaUrl = await generateAndUploadImage(item.id, item.image_prompt);
+            imagesGenerated++;
             await supabase.from('content_items').update({ media_url: mediaUrl }).eq('id', item.id);
           } catch (imgErr) {
             console.log(`⚠️ Не удалось сгенерировать картинку для ${item.id}: ${imgErr.message}`);
