@@ -55,6 +55,8 @@ function App() {
   const [projects, setProjects] = useState([]);
   const [allTasks, setAllTasks] = useState([]);
   const [finances, setFinances] = useState([]);
+  const [financeTab, setFinanceTab] = useState('expenses');
+  const [financeAccounts, setFinanceAccounts] = useState([]);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [selectedProject, setSelectedProject] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -362,6 +364,26 @@ function App() {
     loadAllData();
   }
 
+  async function loadFinanceAccounts() {
+    const { data } = await supabase.from('finance_accounts').select('*').order('created_at', { ascending: true });
+    setFinanceAccounts(data || []);
+  }
+
+  async function addFinanceAccount(category) {
+    const name = prompt('Название кабинета (например: Яндекс.Директ):');
+    if (!name) return;
+    const url = prompt('Ссылка на кабинет:');
+    if (!url) return;
+    await supabase.from('finance_accounts').insert({ category, name, url });
+    loadFinanceAccounts();
+  }
+
+  async function deleteFinanceAccount(id) {
+    if (!confirm('Удалить кабинет из списка?')) return;
+    await supabase.from('finance_accounts').delete().eq('id', id);
+    loadFinanceAccounts();
+  }
+
   function getTaskDeadlineStatus(deadline) {
     if (!deadline) return null;
     const today = new Date();
@@ -652,7 +674,7 @@ function App() {
           <button className={`nav-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
             <span className="nav-emoji">📈</span> Аналитика
           </button>
-          <button className={`nav-btn ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => setActiveTab('finance')}>
+          <button className={`nav-btn ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => { setActiveTab('finance'); loadFinanceAccounts(); }}>
             <span className="nav-emoji">💰</span> Финансы
           </button>
         </nav>
@@ -733,20 +755,86 @@ function App() {
               <span className="finance-value">{balance} ₽</span>
             </div>
           </div>
-          <div className="finance-actions">
-            <button onClick={() => createFinance('income')} className="finance-btn income-btn">➕ Доход</button>
-            <button onClick={() => createFinance('expense')} className="finance-btn expense-btn">➖ Расход</button>
+
+          <div className="project-tabs" style={{ justifyContent: 'center', marginBottom: 20 }}>
+            <button className={`project-tab-btn ${financeTab === 'expenses' ? 'active' : ''}`} onClick={() => setFinanceTab('expenses')}><span>💸</span> Расходы</button>
+            <button className={`project-tab-btn ${financeTab === 'income' ? 'active' : ''}`} onClick={() => setFinanceTab('income')}><span>💰</span> Доходы</button>
+            <button className={`project-tab-btn ${financeTab === 'ad_accounts' ? 'active' : ''}`} onClick={() => setFinanceTab('ad_accounts')}><span>📣</span> Рекламные кабинеты</button>
           </div>
-          <div className="finance-list">
-            {finances.length === 0 && <p className="empty">Нет финансовых операций</p>}
-            {finances.map((f) => (
-              <div key={f.id} className="finance-item">
-                <span className={`finance-type ${f.type === 'income' ? 'income' : 'expense'}`}>{f.type === 'income' ? '💰' : '💸'}</span>
-                <span className="finance-desc">{f.description}</span>
-                <span className={`finance-amount ${f.type === 'income' ? 'income' : 'expense'}`}>{f.type === 'income' ? '+' : '−'}{f.amount} ₽</span>
+
+          {financeTab === 'expenses' && (
+            <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+              <div style={{ flex: '1 1 280px' }}>
+                <h3 style={{ color: '#fff', fontWeight: 400, marginBottom: 10 }}>🧠 Кабинеты AI-сервисов</h3>
+                <div className="content-list">
+                  {financeAccounts.filter(a => a.category === 'ai_service').map((a) => (
+                    <div key={a.id} className="content-item">
+                      <div className="content-body">
+                        <a href={a.url} target="_blank" rel="noreferrer" className="content-title" style={{ color: '#38bdf8', textDecoration: 'none' }}>{a.name}</a>
+                        {a.balance_provider === 'router_ai' && <span className="content-text">💳 Баланс: {a.last_balance != null ? `${a.last_balance} ₽` : 'проверяется автоматически'}</span>}
+                        {!a.balance_provider && <span className="content-text">🔔 Напоминание: {a.reminder_schedule === 'weekly' ? 'раз в неделю' : 'вручную'}</span>}
+                      </div>
+                      <button className="content-action-btn delete" onClick={() => deleteFinanceAccount(a.id)}>🗑️</button>
+                    </div>
+                  ))}
+                  <button className="section-btn" onClick={() => addFinanceAccount('ai_service')} style={{ marginTop: 8 }}>➕ Добавить кабинет</button>
+                </div>
               </div>
-            ))}
-          </div>
+              <div style={{ flex: '2 1 400px' }}>
+                <div className="finance-actions" style={{ justifyContent: 'flex-start', marginBottom: 12 }}>
+                  <button onClick={() => createFinance('expense')} className="finance-btn expense-btn">➖ Добавить расход</button>
+                </div>
+                <div className="finance-list">
+                  {finances.filter(f => f.type === 'expense').length === 0 && <p className="empty">Нет расходов</p>}
+                  {finances.filter(f => f.type === 'expense').map((f) => (
+                    <div key={f.id} className="finance-item">
+                      <span className="finance-type expense">💸</span>
+                      <span className="finance-desc">{f.description}</span>
+                      <span className="finance-amount expense">−{f.amount} ₽</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {financeTab === 'income' && (
+            <div style={{ maxWidth: 800, margin: '0 auto' }}>
+              <div className="finance-actions">
+                <button onClick={() => createFinance('income')} className="finance-btn income-btn">➕ Добавить доход</button>
+              </div>
+              <div className="finance-list">
+                {finances.filter(f => f.type === 'income').length === 0 && <p className="empty">Нет доходов</p>}
+                {finances.filter(f => f.type === 'income').map((f) => (
+                  <div key={f.id} className="finance-item">
+                    <span className="finance-type income">💰</span>
+                    <span className="finance-desc">{f.description}</span>
+                    <span className="finance-amount income">+{f.amount} ₽</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {financeTab === 'ad_accounts' && (
+            <div style={{ maxWidth: 800, margin: '0 auto' }}>
+              <p className="section-hint">👉 Ссылки на ваши рекламные кабинеты (Яндекс.Директ, VK Реклама и т.д.) — держите здесь для быстрого доступа к статистике доходов от рекламы.</p>
+              <div className="finance-actions">
+                <button className="finance-btn income-btn" onClick={() => addFinanceAccount('ad_account')}>➕ Добавить кабинет</button>
+              </div>
+              <div className="content-list">
+                {financeAccounts.filter(a => a.category === 'ad_account').length === 0 && <p className="empty">Пока нет добавленных рекламных кабинетов</p>}
+                {financeAccounts.filter(a => a.category === 'ad_account').map((a) => (
+                  <div key={a.id} className="content-item">
+                    <div className="content-body">
+                      <a href={a.url} target="_blank" rel="noreferrer" className="content-title" style={{ color: '#38bdf8', textDecoration: 'none' }}>{a.name}</a>
+                    </div>
+                    <button className="content-action-btn delete" onClick={() => deleteFinanceAccount(a.id)}>🗑️</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="main">
@@ -1182,11 +1270,24 @@ function App() {
 
                 {projectTab === 'finance' && (
                   <div className="project-section">
-                    <h3>💰 Финансы проекта</h3>
-                    <p className="section-desc">Реклама, заработок, монетизация</p>
-                    <div className="section-placeholder">
-                      <p>Здесь будет финансовая информация проекта</p>
-                      <button className="section-btn">➕ Добавить доход</button>
+                    <h3>💰 Финансы</h3>
+                    <p className="section-desc">Расходы, доходы и рекламные кабинеты — общие на весь аккаунт, доступны и отсюда, и из верхнего меню</p>
+                    <div className="finance-summary">
+                      <div className="finance-card income-card">
+                        <span className="finance-label">💰 Доходы</span>
+                        <span className="finance-value">+{income} ₽</span>
+                      </div>
+                      <div className="finance-card expense-card">
+                        <span className="finance-label">💸 Расходы</span>
+                        <span className="finance-value">-{expenses} ₽</span>
+                      </div>
+                      <div className="finance-card balance-card">
+                        <span className="finance-label">💎 Баланс</span>
+                        <span className="finance-value">{balance} ₽</span>
+                      </div>
+                    </div>
+                    <div className="section-actions">
+                      <button className="section-btn" onClick={() => { setActiveTab('finance'); loadFinanceAccounts(); }}>💰 Открыть раздел «Финансы»</button>
                     </div>
                   </div>
                 )}

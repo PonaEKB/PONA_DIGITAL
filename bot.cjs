@@ -582,6 +582,43 @@ bot.action(/^reject:(.+)$/, async (ctx) => {
 
 bot.action('noop', (ctx) => ctx.answerCbQuery());
 
+async function checkFinanceAccounts() {
+  if (!OWNER_CHAT_ID) return;
+  try {
+    const { data: accounts } = await supabase.from('finance_accounts').select('*');
+    if (!accounts) return;
+
+    for (const acc of accounts) {
+      if (acc.balance_provider === 'router_ai') {
+        try {
+          const r = await fetch(`${ROUTER_BASE_URL}/credits`, { headers: { Authorization: `Bearer ${ROUTER_KEY}` } });
+          const data = await r.json();
+          const balance = data?.data?.credits;
+          if (typeof balance === 'number') {
+            await supabase.from('finance_accounts').update({ last_balance: balance, last_checked_at: new Date().toISOString() }).eq('id', acc.id);
+            if (acc.low_balance_threshold != null && balance < acc.low_balance_threshold) {
+              await bot.telegram.sendMessage(OWNER_CHAT_ID, `⚠️ Низкий баланс на «${acc.name}»: ${balance.toFixed(2)} ₽ (порог ${acc.low_balance_threshold} ₽). Пополните: ${acc.url}`);
+            }
+          }
+        } catch (err) {
+          console.log(`⚠️ Не удалось проверить баланс ${acc.name}: ${err.message}`);
+        }
+      }
+    }
+
+    // Ручное напоминание по сервисам без авто-проверки — раз в неделю, по понедельникам.
+    if (new Date().getDay() === 1) {
+      const manual = accounts.filter(a => !a.balance_provider && a.reminder_schedule === 'weekly');
+      if (manual.length > 0) {
+        const list = manual.map(a => `• ${a.name}: ${a.url}`).join('\n');
+        await bot.telegram.sendMessage(OWNER_CHAT_ID, `🔔 Еженедельное напоминание — проверьте балансы:\n\n${list}`);
+      }
+    }
+  } catch (err) {
+    console.log(`⚠️ Ошибка проверки финансовых кабинетов: ${err.message}`);
+  }
+}
+
 async function captureSubscriberSnapshot() {
   if (!CHANNEL_ID || !STATS_PROJECT_ID) return;
   try {
@@ -707,6 +744,10 @@ if (OWNER_CHAT_ID) {
   setInterval(notifyNewDrafts, 60 * 1000);
   notifyNewDrafts();
   console.log('📝 Отправка черновиков на утверждение владельцу включена');
+
+  setInterval(checkFinanceAccounts, 24 * 60 * 60 * 1000);
+  checkFinanceAccounts();
+  console.log('💰 Проверка балансов и напоминания по финансовым кабинетам включены (раз в сутки)');
 } else {
   console.log('⚠️ OWNER_CHAT_ID не задан — черновики не будут приходить на утверждение в личку');
 }
