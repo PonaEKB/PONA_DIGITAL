@@ -158,7 +158,8 @@ const TOOLS = [
   { type: 'function', function: { name: 'get_finance_summary', description: 'Сводка по финансам: доходы, расходы, баланс', parameters: { type: 'object', properties: {}, required: [] } } },
   { type: 'function', function: { name: 'list_pending_content', description: 'Список постов, ожидающих утверждения', parameters: { type: 'object', properties: { project_name: { type: 'string' } }, required: [] } } },
   { type: 'function', function: { name: 'get_weather', description: 'Текущая погода в городе. Если пользователь не назвал город — используй Москву.', parameters: { type: 'object', properties: { city: { type: 'string', description: 'Город, например Moscow' } }, required: [] } } },
-  { type: 'function', function: { name: 'get_currency_rate', description: 'Официальный курс валюты к рублю (ЦБ РФ) — доллар, евро и др.', parameters: { type: 'object', properties: { currency_code: { type: 'string', description: 'Код валюты, например USD, EUR, CNY' } }, required: ['currency_code'] } } }
+  { type: 'function', function: { name: 'get_currency_rate', description: 'Официальный курс валюты к рублю (ЦБ РФ) — доллар, евро и др.', parameters: { type: 'object', properties: { currency_code: { type: 'string', description: 'Код валюты, например USD, EUR, CNY' } }, required: ['currency_code'] } } },
+  { type: 'function', function: { name: 'web_search', description: 'Поиск актуальной информации в интернете по ЛЮБОЙ теме, не связанной с CRM/погодой/курсами валют — факты, новости, «сколько», «кто», «из чего», любые общие вопросы. Используй это вместо догадок, если не уверен в ответе.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Поисковый запрос' } }, required: ['query'] } } }
 ];
 
 const WRITE_TOOLS = new Set(['create_task', 'complete_task', 'add_finance']);
@@ -225,6 +226,29 @@ async function execReadTool(name, args) {
         return { error: 'Не удалось получить курс: ' + err.message };
       }
     }
+    case 'web_search': {
+      try {
+        const r = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
+          body: JSON.stringify({
+            model: 'perplexity/sonar',
+            max_tokens: 800,
+            messages: [{ role: 'user', content: args.query }]
+          })
+        });
+        const data = await r.json();
+        if (!r.ok) return { error: data.error?.message || 'Поиск недоступен' };
+        const msg = data.choices?.[0]?.message;
+        const sources = (msg?.annotations || [])
+          .filter(a => a.type === 'url_citation')
+          .slice(0, 3)
+          .map(a => a.url_citation.url);
+        return { answer: msg?.content || 'Ничего не найдено', sources };
+      } catch (err) {
+        return { error: 'Не удалось выполнить поиск: ' + err.message };
+      }
+    }
     default:
       return { error: 'Неизвестный инструмент' };
   }
@@ -276,7 +300,7 @@ async function runAgent(ctx, userText) {
         model: MODEL,
         max_tokens: 2048,
         messages: [
-          { role: 'system', content: 'Ты — полноценный разговорный AI-агент PONA DIGITAL. Помогаешь владельцу управлять проектами, задачами и финансами, а также отвечаешь на любые обычные вопросы (погода, курсы валют, общие знания, разговор на любую тему) — как обычный AI-ассистент. Для данных о проектах/задачах/финансах, погоде и курсах валют используй инструменты вместо догадок. Отвечай кратко и по-русски.' },
+          { role: 'system', content: 'Ты — полноценный разговорный AI-агент PONA DIGITAL, отвечаешь буквально на любые вопросы в любой области (не только CRM). Для данных о проектах/задачах/финансах — свои инструменты. Для погоды и курсов валют — свои инструменты. Для ВСЕГО остального, что требует актуальных или конкретных фактов (новости, «сколько/кто/когда/из чего», любая незнакомая тебе тема) — используй web_search вместо догадок, не отказывайся отвечать. Отвечай кратко и по-русски.' },
           { role: 'user', content: userText }
         ],
         tools: TOOLS
