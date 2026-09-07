@@ -1,6 +1,11 @@
 require('dotenv').config();
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const ffmpeg = require('fluent-ffmpeg');
+ffmpeg.setFfmpegPath(require('@ffmpeg-installer/ffmpeg').path);
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
@@ -323,13 +328,42 @@ async function synthesizeSpeech(text) {
   return Buffer.from(await r.arrayBuffer());
 }
 
-// Отвечаем текстом всегда; если запрос пришёл голосом — дополнительно озвучиваем ответ аудиосообщением.
+// Router AI TTS отдаёт только mp3/pcm, а нативные голосовые сообщения Telegram требуют OGG/Opus — конвертируем через ffmpeg.
+function convertMp3ToOggOpus(mp3Buffer) {
+  return new Promise((resolve, reject) => {
+    const tmpId = Math.random().toString(36).slice(2);
+    const mp3Path = path.join(os.tmpdir(), `tts_${tmpId}.mp3`);
+    const oggPath = path.join(os.tmpdir(), `tts_${tmpId}.ogg`);
+    fs.writeFileSync(mp3Path, mp3Buffer);
+    ffmpeg(mp3Path)
+      .audioCodec('libopus')
+      .audioBitrate('32k')
+      .format('ogg')
+      .on('error', (err) => {
+        try { fs.unlinkSync(mp3Path); } catch (_) {}
+        reject(err);
+      })
+      .on('end', () => {
+        try {
+          const oggBuffer = fs.readFileSync(oggPath);
+          fs.unlinkSync(mp3Path);
+          fs.unlinkSync(oggPath);
+          resolve(oggBuffer);
+        } catch (err) { reject(err); }
+      })
+      .save(oggPath);
+  });
+}
+
+// Отвечаем текстом всегда; если запрос пришёл голосом — дополнительно озвучиваем ответ настоящим голосовым сообщением.
 async function replyWithOptionalVoice(ctx, text, voiceReply) {
   await ctx.reply(text);
   if (voiceReply) {
     try {
-      const audio = await synthesizeSpeech(text);
-      await ctx.replyWithAudio({ source: audio, filename: 'reply.mp3' });
+      await ctx.sendChatAction('record_voice');
+      const mp3 = await synthesizeSpeech(text);
+      const ogg = await convertMp3ToOggOpus(mp3);
+      await ctx.replyWithVoice({ source: ogg, filename: 'reply.ogg' });
     } catch (err) {
       console.log(`⚠️ Не удалось озвучить ответ: ${err.message}`);
     }
