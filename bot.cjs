@@ -311,7 +311,32 @@ function describeAction(name, args) {
 
 const pendingActions = new Map();
 
-async function runAgent(ctx, userText) {
+const TTS_MODEL = 'minimax/speech-2.8-turbo';
+
+async function synthesizeSpeech(text) {
+  const r = await fetch(`${ROUTER_BASE_URL}/audio/speech`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
+    body: JSON.stringify({ model: TTS_MODEL, input: text.slice(0, 2000), voice: 'alloy', response_format: 'mp3' })
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return Buffer.from(await r.arrayBuffer());
+}
+
+// Отвечаем текстом всегда; если запрос пришёл голосом — дополнительно озвучиваем ответ аудиосообщением.
+async function replyWithOptionalVoice(ctx, text, voiceReply) {
+  await ctx.reply(text);
+  if (voiceReply) {
+    try {
+      const audio = await synthesizeSpeech(text);
+      await ctx.replyWithAudio({ source: audio, filename: 'reply.mp3' });
+    } catch (err) {
+      console.log(`⚠️ Не удалось озвучить ответ: ${err.message}`);
+    }
+  }
+}
+
+async function runAgent(ctx, userText, voiceReply = false) {
   try {
     const response = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -335,7 +360,7 @@ async function runAgent(ctx, userText) {
     const toolCalls = message.tool_calls;
 
     if (!toolCalls || toolCalls.length === 0) {
-      await ctx.reply(message.content || 'Не понял, уточните запрос.');
+      await replyWithOptionalVoice(ctx, message.content || 'Не понял, уточните запрос.', voiceReply);
       return;
     }
 
@@ -370,7 +395,7 @@ async function runAgent(ctx, userText) {
           })
         });
         const followData = await followUp.json();
-        await ctx.reply(followData.choices?.[0]?.message?.content || JSON.stringify(result));
+        await replyWithOptionalVoice(ctx, followData.choices?.[0]?.message?.content || JSON.stringify(result), voiceReply);
       }
     }
   } catch (err) {
@@ -430,7 +455,7 @@ bot.on('voice', async (ctx) => {
     const fileLink = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
     const text = await transcribeVoice(fileLink.href);
     await ctx.reply(`🎙 Распознано: «${text}»`);
-    await runAgent(ctx, text);
+    await runAgent(ctx, text, true);
   } catch (err) {
     await ctx.reply('Не удалось распознать голос: ' + err.message);
   }
