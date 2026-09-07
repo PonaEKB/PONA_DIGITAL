@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -51,27 +51,65 @@ async function askAI(question) {
   }
 }
 
-// ===== Личный кабинет: меню на кнопках =====
+// ===== Личный кабинет: закреплённая клавиатура внизу экрана (как в интернет-магазине) =====
 
-function mainMenuKeyboard() {
-  return {
-    inline_keyboard: [
-      [{ text: '📊 Статистика', callback_data: 'menu:stats' }, { text: '📁 Проекты', callback_data: 'menu:projects' }],
-      [{ text: '✅ Задачи', callback_data: 'menu:tasks' }, { text: '🎨 На утверждение', callback_data: 'menu:content' }],
-      [{ text: '💰 Финансы', callback_data: 'menu:finance' }, { text: '🤖 Спросить AI', callback_data: 'menu:ai' }]
-    ]
-  };
+const MENU_LABELS = {
+  stats: '📊 Статистика',
+  projects: '📁 Проекты',
+  tasks: '✅ Задачи',
+  content: '🎨 На утверждение',
+  finance: '💰 Финансы',
+  ai: '🤖 Спросить AI'
+};
+
+function mainReplyKeyboard() {
+  return Markup.keyboard([
+    [MENU_LABELS.stats, MENU_LABELS.projects],
+    [MENU_LABELS.tasks, MENU_LABELS.content],
+    [MENU_LABELS.finance, MENU_LABELS.ai]
+  ]).resize();
 }
 
 bot.start((ctx) => {
   if (!isOwner(ctx)) return ctx.reply('Этот бот приватный.');
-  ctx.reply('🚀 Привет! Я PONA DIGITAL — твой личный кабинет и AI-агент.\n\nВыбери раздел кнопкой, напиши вопрос текстом или пришли голосовое сообщение — отвечу и могу выполнить действие (с подтверждением).', { reply_markup: mainMenuKeyboard() });
+  ctx.reply('🚀 Привет! Я PONA DIGITAL — твой личный кабинет и AI-агент.\n\nВнизу — постоянное меню на кнопках. Можно также написать вопрос текстом или прислать голосовое сообщение — отвечу и могу выполнить действие (с подтверждением).', mainReplyKeyboard());
 });
 
 bot.command('menu', (ctx) => {
   if (!isOwner(ctx)) return;
-  ctx.reply('📋 Меню:', { reply_markup: mainMenuKeyboard() });
+  ctx.reply('📋 Меню внизу 👇', mainReplyKeyboard());
 });
+
+async function showStats(ctx) {
+  const projects = await execReadTool('list_projects', {});
+  if (!projects.length) return ctx.reply('Нет проектов.');
+  let text = '📊 Статистика:\n\n';
+  for (const p of projects) {
+    const s = await execReadTool('get_project_stats', { project_name: p.name });
+    text += `${p.name}: 👥 ${s.subscribers}, ⏳ на утверждении: ${s.pending_approval}\n`;
+  }
+  await ctx.reply(text);
+}
+
+async function showProjects(ctx) {
+  const projects = await execReadTool('list_projects', {});
+  await ctx.reply(projects.length ? '📁 Проекты:\n\n' + projects.map(p => `• ${p.name} (${p.status})`).join('\n') : 'Нет проектов.');
+}
+
+async function showTasks(ctx) {
+  const tasks = await execReadTool('list_tasks', {});
+  await ctx.reply(tasks.length ? '✅ Задачи:\n\n' + tasks.map(t => `${t.status === 'done' ? '✅' : '⬜'} ${t.title}`).join('\n') : 'Нет задач.');
+}
+
+async function showPendingContent(ctx) {
+  const items = await execReadTool('list_pending_content', {});
+  await ctx.reply(items.length ? '🎨 На утверждении:\n\n' + items.map(i => `• ${i.topic}: ${i.preview}...`).join('\n\n') : 'Нет постов на утверждении.');
+}
+
+async function showFinance(ctx) {
+  const s = await execReadTool('get_finance_summary', {});
+  await ctx.reply(`💰 Финансы:\n\nДоходы: ${s.income}₽\nРасходы: ${s.expense}₽\nБаланс: ${s.balance}₽`);
+}
 
 bot.command('myid', (ctx) => ctx.reply(`Ваш chat_id: ${ctx.chat.id}`));
 
@@ -289,52 +327,13 @@ bot.action(/^cancel:(.+)$/, async (ctx) => {
   try { await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: '❌ Отменено', callback_data: 'noop' }]] }); } catch (_) {}
 });
 
-bot.action('menu:stats', async (ctx) => {
-  if (!isOwner(ctx)) return ctx.answerCbQuery();
-  await ctx.answerCbQuery();
-  const projects = await execReadTool('list_projects', {});
-  if (!projects.length) return ctx.reply('Нет проектов.');
-  let text = '📊 Статистика:\n\n';
-  for (const p of projects) {
-    const s = await execReadTool('get_project_stats', { project_name: p.name });
-    text += `${p.name}: 👥 ${s.subscribers}, ⏳ на утверждении: ${s.pending_approval}\n`;
-  }
-  await ctx.reply(text);
-});
-
-bot.action('menu:projects', async (ctx) => {
-  if (!isOwner(ctx)) return ctx.answerCbQuery();
-  await ctx.answerCbQuery();
-  const projects = await execReadTool('list_projects', {});
-  await ctx.reply(projects.length ? '📁 Проекты:\n\n' + projects.map(p => `• ${p.name} (${p.status})`).join('\n') : 'Нет проектов.');
-});
-
-bot.action('menu:tasks', async (ctx) => {
-  if (!isOwner(ctx)) return ctx.answerCbQuery();
-  await ctx.answerCbQuery();
-  const tasks = await execReadTool('list_tasks', {});
-  await ctx.reply(tasks.length ? '✅ Задачи:\n\n' + tasks.map(t => `${t.status === 'done' ? '✅' : '⬜'} ${t.title}`).join('\n') : 'Нет задач.');
-});
-
-bot.action('menu:content', async (ctx) => {
-  if (!isOwner(ctx)) return ctx.answerCbQuery();
-  await ctx.answerCbQuery();
-  const items = await execReadTool('list_pending_content', {});
-  await ctx.reply(items.length ? '🎨 На утверждении:\n\n' + items.map(i => `• ${i.topic}: ${i.preview}...`).join('\n\n') : 'Нет постов на утверждении.');
-});
-
-bot.action('menu:finance', async (ctx) => {
-  if (!isOwner(ctx)) return ctx.answerCbQuery();
-  await ctx.answerCbQuery();
-  const s = await execReadTool('get_finance_summary', {});
-  await ctx.reply(`💰 Финансы:\n\nДоходы: ${s.income}₽\nРасходы: ${s.expense}₽\nБаланс: ${s.balance}₽`);
-});
-
-bot.action('menu:ai', async (ctx) => {
-  if (!isOwner(ctx)) return ctx.answerCbQuery();
-  await ctx.answerCbQuery();
-  await ctx.reply('🤖 Напишите вопрос текстом или пришлите голосовое сообщение.');
-});
+// Инлайн-варианты меню оставлены на случай старых сообщений — дублируют кнопки внизу экрана.
+bot.action('menu:stats', async (ctx) => { if (!isOwner(ctx)) return ctx.answerCbQuery(); await ctx.answerCbQuery(); await showStats(ctx); });
+bot.action('menu:projects', async (ctx) => { if (!isOwner(ctx)) return ctx.answerCbQuery(); await ctx.answerCbQuery(); await showProjects(ctx); });
+bot.action('menu:tasks', async (ctx) => { if (!isOwner(ctx)) return ctx.answerCbQuery(); await ctx.answerCbQuery(); await showTasks(ctx); });
+bot.action('menu:content', async (ctx) => { if (!isOwner(ctx)) return ctx.answerCbQuery(); await ctx.answerCbQuery(); await showPendingContent(ctx); });
+bot.action('menu:finance', async (ctx) => { if (!isOwner(ctx)) return ctx.answerCbQuery(); await ctx.answerCbQuery(); await showFinance(ctx); });
+bot.action('menu:ai', async (ctx) => { if (!isOwner(ctx)) return ctx.answerCbQuery(); await ctx.answerCbQuery(); await ctx.reply('🤖 Напишите вопрос текстом или пришлите голосовое сообщение.'); });
 
 // ===== Голосовые сообщения =====
 
@@ -369,9 +368,20 @@ bot.on('voice', async (ctx) => {
 
 bot.on('text', async (ctx) => {
   if (!isOwner(ctx)) return;
-  if (ctx.message.text.startsWith('/')) return;
+  const text = ctx.message.text;
+  if (text.startsWith('/')) return;
+
+  switch (text) {
+    case MENU_LABELS.stats: return showStats(ctx);
+    case MENU_LABELS.projects: return showProjects(ctx);
+    case MENU_LABELS.tasks: return showTasks(ctx);
+    case MENU_LABELS.content: return showPendingContent(ctx);
+    case MENU_LABELS.finance: return showFinance(ctx);
+    case MENU_LABELS.ai: return ctx.reply('🤖 Напишите вопрос или пришлите голосовое сообщение — отвечу прямо здесь.');
+  }
+
   await ctx.sendChatAction('typing');
-  await runAgent(ctx, ctx.message.text);
+  await runAgent(ctx, text);
 });
 
 const MAX_PENDING_APPROVAL = 12; // держим в очереди на утверждение не больше ~3 дней контента разом
