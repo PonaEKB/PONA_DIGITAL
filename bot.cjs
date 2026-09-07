@@ -16,6 +16,7 @@ const IMAGE_MODEL = 'krea/krea-2-medium-turbo';
 const MEDIA_BUCKET = 'content-media';
 // Проект, к которому относится CHANNEL_ID — статистика подписчиков привязывается к нему.
 const STATS_PROJECT_ID = process.env.TELEGRAM_PROJECT_ID;
+const TGSTAT_TOKEN = process.env.TGSTAT_API_TOKEN;
 
 const TRANSCRIBE_MODEL = 'openai/gpt-transcribe';
 
@@ -159,7 +160,8 @@ const TOOLS = [
   { type: 'function', function: { name: 'list_pending_content', description: 'Список постов, ожидающих утверждения', parameters: { type: 'object', properties: { project_name: { type: 'string' } }, required: [] } } },
   { type: 'function', function: { name: 'get_weather', description: 'Текущая погода в городе. Если пользователь не назвал город — используй Москву.', parameters: { type: 'object', properties: { city: { type: 'string', description: 'Город, например Moscow' } }, required: [] } } },
   { type: 'function', function: { name: 'get_currency_rate', description: 'Официальный курс валюты к рублю (ЦБ РФ) — доллар, евро и др.', parameters: { type: 'object', properties: { currency_code: { type: 'string', description: 'Код валюты, например USD, EUR, CNY' } }, required: ['currency_code'] } } },
-  { type: 'function', function: { name: 'web_search', description: 'Поиск актуальной информации в интернете по ЛЮБОЙ теме, не связанной с CRM/погодой/курсами валют — факты, новости, «сколько», «кто», «из чего», любые общие вопросы. Используй это вместо догадок, если не уверен в ответе.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Поисковый запрос' } }, required: ['query'] } } }
+  { type: 'function', function: { name: 'web_search', description: 'Поиск актуальной информации в интернете по ЛЮБОЙ теме, не связанной с CRM/погодой/курсами валют — факты, новости, «сколько», «кто», «из чего», любые общие вопросы. Используй это вместо догадок, если не уверен в ответе.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Поисковый запрос' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'get_tgstat_stats', description: 'Внешняя аналитика Telegram-канала от сервиса TGStat: число подписчиков по их данным, индекс цитируемости и охват (только для канала, привязанного к TGStat-аккаунту владельца, бесплатный тариф).', parameters: { type: 'object', properties: { channel: { type: 'string', description: 'Username канала, например @VkusnoZnatI' } }, required: [] } } }
 ];
 
 const WRITE_TOOLS = new Set(['create_task', 'complete_task', 'add_finance']);
@@ -247,6 +249,24 @@ async function execReadTool(name, args) {
         return { answer: msg?.content || 'Ничего не найдено', sources };
       } catch (err) {
         return { error: 'Не удалось выполнить поиск: ' + err.message };
+      }
+    }
+    case 'get_tgstat_stats': {
+      if (!TGSTAT_TOKEN) return { error: 'TGStat ещё не подключён' };
+      try {
+        const channel = args.channel || CHANNEL_ID;
+        const r = await fetch(`https://api.tgstat.ru/channels/get?token=${TGSTAT_TOKEN}&channelId=${encodeURIComponent(channel)}`);
+        const data = await r.json();
+        if (data.status !== 'ok') {
+          return { error: data.error === 'channel_not_found' ? 'TGStat пока не проиндексировал этот канал (обычно занимает время для новых/маленьких каналов)' : data.error };
+        }
+        return {
+          title: data.response.title,
+          subscribers_tgstat: data.response.participants_count,
+          citation_index: data.response.ci_index
+        };
+      } catch (err) {
+        return { error: 'TGStat недоступен: ' + err.message };
       }
     }
     default:
