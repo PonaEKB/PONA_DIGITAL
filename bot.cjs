@@ -17,8 +17,14 @@ const MEDIA_BUCKET = 'content-media';
 // Проект, к которому относится CHANNEL_ID — статистика подписчиков привязывается к нему.
 const STATS_PROJECT_ID = process.env.TELEGRAM_PROJECT_ID;
 
+const TRANSCRIBE_MODEL = 'openai/gpt-transcribe';
+
 const bot = new Telegraf(TOKEN);
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+function isOwner(ctx) {
+  return Boolean(OWNER_CHAT_ID) && String(ctx.chat.id) === String(OWNER_CHAT_ID);
+}
 
 async function askAI(question) {
   try {
@@ -45,32 +51,32 @@ async function askAI(question) {
   }
 }
 
-bot.start((ctx) => ctx.reply('🚀 Привет! Я бот PONA DIGITAL с AI!\n\n/ai [вопрос] — спросить AI\n/idea [тема] — идея проекта\n/post [тема] — написать пост\n/stats — статистика\n/projects — проекты\n/report — отчёт\n/myid — узнать свой chat_id'));
+// ===== Личный кабинет: меню на кнопках =====
+
+function mainMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📊 Статистика', callback_data: 'menu:stats' }, { text: '📁 Проекты', callback_data: 'menu:projects' }],
+      [{ text: '✅ Задачи', callback_data: 'menu:tasks' }, { text: '🎨 На утверждение', callback_data: 'menu:content' }],
+      [{ text: '💰 Финансы', callback_data: 'menu:finance' }, { text: '🤖 Спросить AI', callback_data: 'menu:ai' }]
+    ]
+  };
+}
+
+bot.start((ctx) => {
+  if (!isOwner(ctx)) return ctx.reply('Этот бот приватный.');
+  ctx.reply('🚀 Привет! Я PONA DIGITAL — твой личный кабинет и AI-агент.\n\nВыбери раздел кнопкой, напиши вопрос текстом или пришли голосовое сообщение — отвечу и могу выполнить действие (с подтверждением).', { reply_markup: mainMenuKeyboard() });
+});
+
+bot.command('menu', (ctx) => {
+  if (!isOwner(ctx)) return;
+  ctx.reply('📋 Меню:', { reply_markup: mainMenuKeyboard() });
+});
 
 bot.command('myid', (ctx) => ctx.reply(`Ваш chat_id: ${ctx.chat.id}`));
 
-bot.command('stats', async (ctx) => {
-  const { data: projects } = await supabase.from('projects').select('*');
-  const { data: tasks } = await supabase.from('tasks').select('*');
-  const done = tasks.filter(t => t.status === 'done').length;
-  ctx.reply(`📊 СТАТИСТИКА\n\n📁 Проектов: ${projects.length}\n📝 Задач: ${tasks.length}\n✅ Готово: ${done}`);
-});
-
-bot.command('projects', async (ctx) => {
-  const { data: projects } = await supabase.from('projects').select('*');
-  if (projects.length === 0) return ctx.reply('📁 Нет проектов');
-  let text = '📁 ПРОЕКТЫ:\n\n';
-  projects.forEach((p, i) => { text += `${i + 1}. ${p.name}\n`; });
-  ctx.reply(text);
-});
-
-bot.command('report', async (ctx) => {
-  const { data: tasks } = await supabase.from('tasks').select('*');
-  const done = tasks.filter(t => t.status === 'done').length;
-  ctx.reply(`📋 ОТЧЁТ\n\n✅ Выполнено: ${done}\n📝 Всего: ${tasks.length}`);
-});
-
 bot.command('ai', async (ctx) => {
+  if (!isOwner(ctx)) return;
   const question = ctx.message.text.replace('/ai', '').trim();
   if (!question) return ctx.reply('Пример: /ai Как дела?');
   ctx.reply('🤔 Думаю...');
@@ -79,6 +85,7 @@ bot.command('ai', async (ctx) => {
 });
 
 bot.command('idea', async (ctx) => {
+  if (!isOwner(ctx)) return;
   const topic = ctx.message.text.replace('/idea', '').trim();
   if (!topic) return ctx.reply('Пример: /idea блог о еде');
   ctx.reply('💡 Генерирую...');
@@ -87,11 +94,284 @@ bot.command('idea', async (ctx) => {
 });
 
 bot.command('post', async (ctx) => {
+  if (!isOwner(ctx)) return;
   const topic = ctx.message.text.replace('/post', '').trim();
   if (!topic) return ctx.reply('Пример: /post борщ');
   ctx.reply('✍️ Пишу...');
   const answer = await askAI(`Напиши пост для Telegram на тему: ${topic}. С эмодзи, структурировано.`);
   ctx.reply(`📝 ПОСТ:\n\n${answer}`);
+});
+
+// ===== Инструменты агента =====
+
+async function findProjectByName(name) {
+  if (!name) return null;
+  const { data } = await supabase.from('projects').select('*').ilike('name', `%${name}%`).limit(1);
+  return data && data[0];
+}
+
+const TOOLS = [
+  { type: 'function', function: { name: 'list_projects', description: 'Получить список всех проектов пользователя', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'get_project_stats', description: 'Статистика по проекту: подписчики, черновики на утверждение', parameters: { type: 'object', properties: { project_name: { type: 'string' } }, required: ['project_name'] } } },
+  { type: 'function', function: { name: 'list_tasks', description: 'Список задач, опционально по проекту и статусу', parameters: { type: 'object', properties: { project_name: { type: 'string' }, status: { type: 'string', enum: ['todo', 'in_progress', 'review', 'done'] } }, required: [] } } },
+  { type: 'function', function: { name: 'create_task', description: 'Создать новую задачу в проекте (требует подтверждения пользователя)', parameters: { type: 'object', properties: { project_name: { type: 'string' }, title: { type: 'string' }, priority: { type: 'string', enum: ['high', 'medium', 'low'] } }, required: ['project_name', 'title'] } } },
+  { type: 'function', function: { name: 'complete_task', description: 'Отметить задачу выполненной по названию (требует подтверждения)', parameters: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] } } },
+  { type: 'function', function: { name: 'add_finance', description: 'Добавить доход или расход (требует подтверждения)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['income', 'expense'] }, amount: { type: 'number' }, description: { type: 'string' } }, required: ['type', 'amount'] } } },
+  { type: 'function', function: { name: 'get_finance_summary', description: 'Сводка по финансам: доходы, расходы, баланс', parameters: { type: 'object', properties: {}, required: [] } } },
+  { type: 'function', function: { name: 'list_pending_content', description: 'Список постов, ожидающих утверждения', parameters: { type: 'object', properties: { project_name: { type: 'string' } }, required: [] } } }
+];
+
+const WRITE_TOOLS = new Set(['create_task', 'complete_task', 'add_finance']);
+
+async function execReadTool(name, args) {
+  switch (name) {
+    case 'list_projects': {
+      const { data } = await supabase.from('projects').select('name, status').order('created_at', { ascending: false });
+      return data || [];
+    }
+    case 'get_project_stats': {
+      const project = await findProjectByName(args.project_name);
+      if (!project) return { error: 'Проект не найден' };
+      const { data: snapshots } = await supabase.from('channel_stats_snapshots').select('*').eq('project_id', project.id).order('captured_at', { ascending: false }).limit(1);
+      const { count: pending } = await supabase.from('content_items').select('id', { count: 'exact', head: true }).eq('project_id', project.id).eq('status', 'draft');
+      return { project: project.name, subscribers: snapshots?.[0]?.subscriber_count ?? 'нет данных', pending_approval: pending || 0 };
+    }
+    case 'list_tasks': {
+      let query = supabase.from('tasks').select('title, status, priority, project_id');
+      if (args.status) query = query.eq('status', args.status);
+      if (args.project_name) {
+        const project = await findProjectByName(args.project_name);
+        if (project) query = query.eq('project_id', project.id);
+      }
+      const { data } = await query.limit(30);
+      return data || [];
+    }
+    case 'get_finance_summary': {
+      const { data } = await supabase.from('finances').select('type, amount');
+      const income = (data || []).filter(f => f.type === 'income').reduce((s, f) => s + Number(f.amount), 0);
+      const expense = (data || []).filter(f => f.type === 'expense').reduce((s, f) => s + Number(f.amount), 0);
+      return { income, expense, balance: income - expense };
+    }
+    case 'list_pending_content': {
+      let query = supabase.from('content_items').select('topic, body, project_id').eq('status', 'draft');
+      if (args.project_name) {
+        const project = await findProjectByName(args.project_name);
+        if (project) query = query.eq('project_id', project.id);
+      }
+      const { data } = await query.limit(10);
+      return (data || []).map(d => ({ topic: d.topic, preview: (d.body || '').slice(0, 80) }));
+    }
+    default:
+      return { error: 'Неизвестный инструмент' };
+  }
+}
+
+async function execWriteTool(name, args) {
+  switch (name) {
+    case 'create_task': {
+      const project = await findProjectByName(args.project_name);
+      if (!project) return { error: 'Проект не найден' };
+      const { error } = await supabase.from('tasks').insert({ project_id: project.id, title: args.title, priority: args.priority || 'medium' });
+      if (error) return { error: error.message };
+      return { ok: true };
+    }
+    case 'complete_task': {
+      const { data } = await supabase.from('tasks').select('id').ilike('title', `%${args.title}%`).limit(1);
+      if (!data || data.length === 0) return { error: 'Задача не найдена' };
+      const { error } = await supabase.from('tasks').update({ status: 'done' }).eq('id', data[0].id);
+      if (error) return { error: error.message };
+      return { ok: true };
+    }
+    case 'add_finance': {
+      const { error } = await supabase.from('finances').insert({ type: args.type, amount: args.amount, description: args.description || null });
+      if (error) return { error: error.message };
+      return { ok: true };
+    }
+    default:
+      return { error: 'Неизвестный инструмент' };
+  }
+}
+
+function describeAction(name, args) {
+  switch (name) {
+    case 'create_task': return `Создать задачу «${args.title}» в проекте «${args.project_name}»${args.priority ? ` (приоритет: ${args.priority})` : ''}`;
+    case 'complete_task': return `Отметить задачу «${args.title}» выполненной`;
+    case 'add_finance': return `Добавить ${args.type === 'income' ? 'доход' : 'расход'}: ${args.amount}₽${args.description ? ` (${args.description})` : ''}`;
+    default: return `${name}(${JSON.stringify(args)})`;
+  }
+}
+
+const pendingActions = new Map();
+
+async function runAgent(ctx, userText) {
+  try {
+    const response = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 2048,
+        messages: [
+          { role: 'system', content: 'Ты — AI-агент PONA DIGITAL, помогаешь владельцу управлять проектами, задачами и финансами. Отвечай кратко, по-русски. Если нужно действие с данными — используй инструменты.' },
+          { role: 'user', content: userText }
+        ],
+        tools: TOOLS
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      await ctx.reply('Ошибка: ' + (data.error?.message || JSON.stringify(data)));
+      return;
+    }
+    const message = data.choices[0].message;
+    const toolCalls = message.tool_calls;
+
+    if (!toolCalls || toolCalls.length === 0) {
+      await ctx.reply(message.content || 'Не понял, уточните запрос.');
+      return;
+    }
+
+    for (const call of toolCalls) {
+      const name = call.function.name;
+      let args = {};
+      try { args = JSON.parse(call.function.arguments || '{}'); } catch (_) {}
+
+      if (WRITE_TOOLS.has(name)) {
+        const actionId = Math.random().toString(36).slice(2, 10);
+        pendingActions.set(actionId, { name, args });
+        await ctx.reply(`❓ ${describeAction(name, args)}?`, {
+          reply_markup: { inline_keyboard: [[
+            { text: '✅ Да', callback_data: `confirm:${actionId}` },
+            { text: '❌ Отмена', callback_data: `cancel:${actionId}` }
+          ]] }
+        });
+      } else {
+        const result = await execReadTool(name, args);
+        const followUp = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
+          body: JSON.stringify({
+            model: MODEL,
+            max_tokens: 1024,
+            messages: [
+              { role: 'system', content: 'Ты — AI-агент PONA DIGITAL. Кратко и по-русски перескажи результат пользователю, без лишней воды.' },
+              { role: 'user', content: userText },
+              { role: 'assistant', content: null, tool_calls: [call] },
+              { role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) }
+            ]
+          })
+        });
+        const followData = await followUp.json();
+        await ctx.reply(followData.choices?.[0]?.message?.content || JSON.stringify(result));
+      }
+    }
+  } catch (err) {
+    await ctx.reply('Ошибка агента: ' + err.message);
+  }
+}
+
+bot.action(/^confirm:(.+)$/, async (ctx) => {
+  if (!isOwner(ctx)) return ctx.answerCbQuery();
+  const id = ctx.match[1];
+  const action = pendingActions.get(id);
+  if (!action) return ctx.answerCbQuery('Действие устарело');
+  pendingActions.delete(id);
+  const result = await execWriteTool(action.name, action.args);
+  await ctx.answerCbQuery(result.error ? 'Ошибка' : 'Готово ✅');
+  try { await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: result.error ? `❌ ${result.error}` : '✅ Выполнено', callback_data: 'noop' }]] }); } catch (_) {}
+});
+
+bot.action(/^cancel:(.+)$/, async (ctx) => {
+  if (!isOwner(ctx)) return ctx.answerCbQuery();
+  const id = ctx.match[1];
+  pendingActions.delete(id);
+  await ctx.answerCbQuery('Отменено');
+  try { await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: '❌ Отменено', callback_data: 'noop' }]] }); } catch (_) {}
+});
+
+bot.action('menu:stats', async (ctx) => {
+  if (!isOwner(ctx)) return ctx.answerCbQuery();
+  await ctx.answerCbQuery();
+  const projects = await execReadTool('list_projects', {});
+  if (!projects.length) return ctx.reply('Нет проектов.');
+  let text = '📊 Статистика:\n\n';
+  for (const p of projects) {
+    const s = await execReadTool('get_project_stats', { project_name: p.name });
+    text += `${p.name}: 👥 ${s.subscribers}, ⏳ на утверждении: ${s.pending_approval}\n`;
+  }
+  await ctx.reply(text);
+});
+
+bot.action('menu:projects', async (ctx) => {
+  if (!isOwner(ctx)) return ctx.answerCbQuery();
+  await ctx.answerCbQuery();
+  const projects = await execReadTool('list_projects', {});
+  await ctx.reply(projects.length ? '📁 Проекты:\n\n' + projects.map(p => `• ${p.name} (${p.status})`).join('\n') : 'Нет проектов.');
+});
+
+bot.action('menu:tasks', async (ctx) => {
+  if (!isOwner(ctx)) return ctx.answerCbQuery();
+  await ctx.answerCbQuery();
+  const tasks = await execReadTool('list_tasks', {});
+  await ctx.reply(tasks.length ? '✅ Задачи:\n\n' + tasks.map(t => `${t.status === 'done' ? '✅' : '⬜'} ${t.title}`).join('\n') : 'Нет задач.');
+});
+
+bot.action('menu:content', async (ctx) => {
+  if (!isOwner(ctx)) return ctx.answerCbQuery();
+  await ctx.answerCbQuery();
+  const items = await execReadTool('list_pending_content', {});
+  await ctx.reply(items.length ? '🎨 На утверждении:\n\n' + items.map(i => `• ${i.topic}: ${i.preview}...`).join('\n\n') : 'Нет постов на утверждении.');
+});
+
+bot.action('menu:finance', async (ctx) => {
+  if (!isOwner(ctx)) return ctx.answerCbQuery();
+  await ctx.answerCbQuery();
+  const s = await execReadTool('get_finance_summary', {});
+  await ctx.reply(`💰 Финансы:\n\nДоходы: ${s.income}₽\nРасходы: ${s.expense}₽\nБаланс: ${s.balance}₽`);
+});
+
+bot.action('menu:ai', async (ctx) => {
+  if (!isOwner(ctx)) return ctx.answerCbQuery();
+  await ctx.answerCbQuery();
+  await ctx.reply('🤖 Напишите вопрос текстом или пришлите голосовое сообщение.');
+});
+
+// ===== Голосовые сообщения =====
+
+async function transcribeVoice(fileUrl) {
+  const audioRes = await fetch(fileUrl);
+  const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+  const form = new FormData();
+  form.append('file', new Blob([audioBuffer], { type: 'audio/ogg' }), 'voice.ogg');
+  form.append('model', TRANSCRIBE_MODEL);
+  const r = await fetch(`${ROUTER_BASE_URL}/audio/transcriptions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ROUTER_KEY}` },
+    body: form
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error?.message || JSON.stringify(data));
+  return data.text;
+}
+
+bot.on('voice', async (ctx) => {
+  if (!isOwner(ctx)) return;
+  try {
+    await ctx.sendChatAction('typing');
+    const fileLink = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
+    const text = await transcribeVoice(fileLink.href);
+    await ctx.reply(`🎙 Распознано: «${text}»`);
+    await runAgent(ctx, text);
+  } catch (err) {
+    await ctx.reply('Не удалось распознать голос: ' + err.message);
+  }
+});
+
+bot.on('text', async (ctx) => {
+  if (!isOwner(ctx)) return;
+  if (ctx.message.text.startsWith('/')) return;
+  await ctx.sendChatAction('typing');
+  await runAgent(ctx, ctx.message.text);
 });
 
 const MAX_PENDING_APPROVAL = 12; // держим в очереди на утверждение не больше ~3 дней контента разом
