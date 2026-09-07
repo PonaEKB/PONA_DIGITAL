@@ -214,7 +214,24 @@ async function captureSubscriberSnapshot() {
   if (!CHANNEL_ID || !STATS_PROJECT_ID) return;
   try {
     const count = await bot.telegram.getChatMembersCount(CHANNEL_ID);
+
+    const { data: prev } = await supabase
+      .from('channel_stats_snapshots')
+      .select('subscriber_count')
+      .eq('project_id', STATS_PROJECT_ID)
+      .order('captured_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
     await supabase.from('channel_stats_snapshots').insert({ project_id: STATS_PROJECT_ID, subscriber_count: count });
+
+    if (prev && OWNER_CHAT_ID) {
+      const drop = prev.subscriber_count - count;
+      const threshold = Math.max(2, Math.round(prev.subscriber_count * 0.05));
+      if (drop >= threshold) {
+        await bot.telegram.sendMessage(OWNER_CHAT_ID, `📉 Резкое падение подписчиков: было ${prev.subscriber_count}, стало ${count} (−${drop}).`);
+      }
+    }
   } catch (err) {
     console.log(`⚠️ Не удалось снять снимок подписчиков: ${err.message}`);
   }

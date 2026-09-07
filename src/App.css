@@ -1211,6 +1211,52 @@
   flex-wrap: wrap;
 }
 
+.content-search-input {
+  flex: 1;
+  min-width: 200px;
+  color: #fff;
+  font-family: 'Dosis', sans-serif;
+}
+
+.content-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.rate-btn.active-good {
+  background: rgba(74, 222, 128, 0.3);
+  border-color: rgba(74, 222, 128, 0.7);
+}
+
+.rate-btn.active-bad {
+  background: rgba(239, 68, 68, 0.3);
+  border-color: rgba(239, 68, 68, 0.7);
+}
+
+.rubric-rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rubric-rank-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 8px 14px;
+}
+
+.rubric-rank-name {
+  color: #eaf2ff;
+  font-size: 14px;
+}
+
+.rubric-rank-score {
+  color: #9fb8dd;
+  font-size: 13px;
+}
+
 .content-thumb {
   width: 56px;
   height: 56px;

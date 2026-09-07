@@ -18,14 +18,39 @@ async function callRouter(path, body) {
   return data;
 }
 
-async function generatePostsText({ projectName, context, days, postsPerDay }) {
+async function getRubricGuidance(projectId) {
+  const { data: rated } = await supabase
+    .from('content_items')
+    .select('topic, rating')
+    .eq('project_id', projectId)
+    .not('rating', 'is', null);
+  if (!rated || rated.length === 0) return '';
+
+  const byRubric = {};
+  for (const r of rated) {
+    const rubric = (r.topic && r.topic.includes(' — ')) ? r.topic.split(' — ')[1] : 'Кухня мира';
+    byRubric[rubric] = byRubric[rubric] || { good: 0, bad: 0 };
+    byRubric[rubric][r.rating]++;
+  }
+  const ranked = Object.entries(byRubric).map(([rubric, r]) => ({ rubric, score: r.good - r.bad })).sort((a, b) => b.score - a.score);
+  const top = ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.rubric);
+  const worst = ranked.filter(r => r.score < 0).slice(-2).map(r => r.rubric);
+
+  let guidance = '';
+  if (top.length) guidance += `\n\nПо реакциям пользователя лучше всего заходят рубрики: ${top.join(', ')} — используй их почаще.`;
+  if (worst.length) guidance += `\n\nЭти рубрики заходят хуже, используй их реже: ${worst.join(', ')}.`;
+  return guidance;
+}
+
+async function generatePostsText({ projectId, projectName, context, days, postsPerDay }) {
   const total = days * postsPerDay;
+  const rubricGuidance = await getRubricGuidance(projectId);
   const data = await callRouter('/chat/completions', {
     model: TEXT_MODEL,
     max_tokens: 4096,
     messages: [
       { role: 'system', content: 'Ты — контент-стратег Telegram-канала. Отвечай СТРОГО валидным JSON-массивом, без markdown-разметки и пояснений.' },
-      { role: 'user', content: `Проект: "${projectName}".\n\n${context}\n\nСгенерируй ${total} постов для Telegram-канала на ${days} дня вперёд, по ${postsPerDay} поста в день. Для каждого поста верни объект: {"day": номер дня от 1 до ${days}, "text": готовый текст поста (3-8 предложений), "image_prompt": подробный промпт на английском для генерации иллюстрации к посту, без текста и букв на изображении, в едином визуальном стиле}.\n\nТребования к "text": НЕ сплошной абзац — разбивай мысли на короткие абзацы пустой строкой между ними (2-4 строки на абзац), к месту используй эмодзи (не в каждом предложении, а как акценты у ключевых мыслей), при уместности заверши цепляющим вопросом или лёгкой интригой для вовлечения. Текст должен визуально хорошо смотреться в Telegram, а не выглядеть плотной стеной текста.\n\nВерни ТОЛЬКО JSON-массив из ${total} объектов, без обёртки и без markdown.` }
+      { role: 'user', content: `Проект: "${projectName}".\n\n${context}${rubricGuidance}\n\nСгенерируй ${total} постов для Telegram-канала на ${days} дня вперёд, по ${postsPerDay} поста в день. Для каждого поста верни объект: {"day": номер дня от 1 до ${days}, "text": готовый текст поста (3-8 предложений), "image_prompt": подробный промпт на английском для генерации иллюстрации к посту, без текста и букв на изображении, в едином визуальном стиле}.\n\nТребования к "text": НЕ сплошной абзац — разбивай мысли на короткие абзацы пустой строкой между ними (2-4 строки на абзац), к месту используй эмодзи (не в каждом предложении, а как акценты у ключевых мыслей), при уместности заверши цепляющим вопросом или лёгкой интригой для вовлечения. Текст должен визуально хорошо смотреться в Telegram, а не выглядеть плотной стеной текста.\n\nВерни ТОЛЬКО JSON-массив из ${total} объектов, без обёртки и без markdown.` }
     ]
   });
   const raw = data.choices?.[0]?.message?.content || '[]';
@@ -51,7 +76,7 @@ export default async function handler(req, res) {
     // Генерируем только текст и промпт для картинки. Сама картинка создаётся
     // не здесь, а в bot.cjs — прямо перед отправкой поста владельцу на
     // утверждение (и только для ближайшей пачки, а не для всех разом).
-    const posts = await generatePostsText({ projectName, context: context || '', days, postsPerDay });
+    const posts = await generatePostsText({ projectId, projectName, context: context || '', days, postsPerDay });
 
     const grouped = {};
     for (const post of posts) {

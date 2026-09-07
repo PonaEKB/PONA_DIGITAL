@@ -62,6 +62,7 @@ function App() {
   const [projectContent, setProjectContent] = useState([]);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentFilter, setContentFilter] = useState('all');
+  const [contentSearch, setContentSearch] = useState('');
   const [statsSnapshots, setStatsSnapshots] = useState([]);
   const [statsEvents, setStatsEvents] = useState([]);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -174,6 +175,18 @@ function App() {
     setStatsSnapshots(snapshots || []);
     setStatsEvents(events || []);
     setStatsLoading(false);
+  }
+
+  async function rateContentItem(item, rating) {
+    const next = item.rating === rating ? null : rating;
+    await supabase.from('content_items').update({ rating: next }).eq('id', item.id);
+    loadProjectContent(item.project_id);
+  }
+
+  function matchesContentSearch(item, query) {
+    if (!query.trim()) return true;
+    const q = query.trim().toLowerCase();
+    return (item.body || '').toLowerCase().includes(q) || (item.topic || '').toLowerCase().includes(q);
   }
 
   async function deleteContentItem(id) {
@@ -825,13 +838,20 @@ function App() {
                         <option value="all">Все площадки</option>
                         {PLATFORMS.map(p => <option key={p.id} value={p.id}>{p.icon} {p.label}</option>)}
                       </select>
+                      <input
+                        className="content-filter content-search-input"
+                        type="text"
+                        placeholder="🔎 Поиск по архиву (тема, текст)..."
+                        value={contentSearch}
+                        onChange={(e) => setContentSearch(e.target.value)}
+                      />
                     </div>
                     {contentLoading && <p className="empty">Загрузка...</p>}
                     <div className="content-list">
-                      {!contentLoading && projectContent.filter(c => contentFilter === 'all' || c.platform === contentFilter).length === 0 && (
-                        <p className="empty">Постов пока нет</p>
+                      {!contentLoading && projectContent.filter(c => (contentFilter === 'all' || c.platform === contentFilter) && matchesContentSearch(c, contentSearch)).length === 0 && (
+                        <p className="empty">Постов не найдено</p>
                       )}
-                      {projectContent.filter(c => contentFilter === 'all' || c.platform === contentFilter).map((item) => {
+                      {projectContent.filter(c => (contentFilter === 'all' || c.platform === contentFilter) && matchesContentSearch(c, contentSearch)).map((item) => {
                         const platform = getPlatformInfo(item.platform);
                         return (
                           <div key={item.id} className="content-item">
@@ -847,6 +867,8 @@ function App() {
                               <button className="content-action-btn" onClick={() => setPreviewItem(item)}>👁 Просмотр</button>
                               {item.status === 'draft' && <button className="content-action-btn" onClick={() => scheduleContentItem(item)}>⏳ В очередь</button>}
                               {(item.status === 'scheduled' || item.status === 'failed') && <button className="content-action-btn" onClick={() => publishNow(item)}>🚀 Опубликовать</button>}
+                              <button className={`content-action-btn rate-btn ${item.rating === 'good' ? 'active-good' : ''}`} onClick={() => rateContentItem(item, 'good')} title="Хорошо зашло">👍</button>
+                              <button className={`content-action-btn rate-btn ${item.rating === 'bad' ? 'active-bad' : ''}`} onClick={() => rateContentItem(item, 'bad')} title="Не зашло">👎</button>
                               <button className="content-action-btn delete" onClick={() => deleteContentItem(item.id)}>🗑️</button>
                             </div>
                           </div>
@@ -964,6 +986,34 @@ function App() {
                         <SubscriberChart snapshots={statsSnapshots} />
                       </>
                     )}
+
+                    {(() => {
+                      const rated = projectContent.filter(c => c.rating);
+                      if (rated.length === 0) return null;
+                      const byRubric = {};
+                      rated.forEach(c => {
+                        const rubric = (c.topic && c.topic.includes(' — ')) ? c.topic.split(' — ')[1] : 'Кухня мира';
+                        byRubric[rubric] = byRubric[rubric] || { good: 0, bad: 0 };
+                        byRubric[rubric][c.rating]++;
+                      });
+                      const rows = Object.entries(byRubric)
+                        .map(([rubric, r]) => ({ rubric, ...r, score: r.good - r.bad }))
+                        .sort((a, b) => b.score - a.score);
+                      return (
+                        <div className="project-section" style={{ marginTop: 16, padding: 18 }}>
+                          <h3>🏆 Топ рубрик</h3>
+                          <p className="section-hint">По вашим оценкам 👍/👎 в разделе «Контент». Эти данные используются при генерации нового контента — топовые рубрики будут предлагаться чаще.</p>
+                          <div className="rubric-rank-list">
+                            {rows.map(r => (
+                              <div key={r.rubric} className="rubric-rank-row">
+                                <span className="rubric-rank-name">{r.rubric}</span>
+                                <span className="rubric-rank-score">👍 {r.good} &nbsp; 👎 {r.bad}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
 
