@@ -67,6 +67,12 @@ function App() {
   const [statsEvents, setStatsEvents] = useState([]);
   const [statsLoading, setStatsLoading] = useState(false);
   const [previewItem, setPreviewItem] = useState(null);
+  const [trendQuery, setTrendQuery] = useState('');
+  const [trendResults, setTrendResults] = useState([]);
+  const [trendLoading, setTrendLoading] = useState(false);
+  const [trendErrors, setTrendErrors] = useState([]);
+  const [trendScripts, setTrendScripts] = useState([]);
+  const [analyzingTrendId, setAnalyzingTrendId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [email, setEmail] = useState('');
@@ -175,6 +181,82 @@ function App() {
     setStatsSnapshots(snapshots || []);
     setStatsEvents(events || []);
     setStatsLoading(false);
+  }
+
+  async function loadTrendsTab(projectId) {
+    const [{ data: videos }, { data: scripts }] = await Promise.all([
+      supabase.from('trend_videos').select('*').eq('project_id', projectId).order('views', { ascending: false }),
+      supabase.from('trend_scripts').select('*').eq('project_id', projectId).order('created_at', { ascending: false })
+    ]);
+    setTrendResults(videos || []);
+    setTrendScripts(scripts || []);
+  }
+
+  async function searchTrends() {
+    if (!trendQuery.trim() || !selectedProject) return;
+    setTrendLoading(true);
+    setTrendErrors([]);
+    try {
+      const response = await fetch('/api/trends-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: trendQuery.trim(), platforms: ['youtube', 'vk'], project_id: selectedProject.id })
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setTrendErrors([data.error || 'Ошибка поиска']);
+      } else {
+        setTrendErrors(data.errors || []);
+        await loadTrendsTab(selectedProject.id);
+      }
+    } catch (err) {
+      setTrendErrors([err.message]);
+    }
+    setTrendLoading(false);
+  }
+
+  async function analyzeTrend(id) {
+    setAnalyzingTrendId(id);
+    try {
+      const response = await fetch('/api/trends-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+      });
+      const data = await response.json();
+      if (!response.ok) alert('Ошибка анализа: ' + data.error);
+      else await loadTrendsTab(selectedProject.id);
+    } catch (err) {
+      alert('Ошибка: ' + err.message);
+    }
+    setAnalyzingTrendId(null);
+  }
+
+  async function adaptTrend(id) {
+    const niche = prompt('Ниша/тема бренда:', selectedProject?.name || '');
+    if (niche === null) return;
+    const tone = prompt('Tone of voice (например: дружелюбно, экспертно, с юмором):', '') || '';
+    const product = prompt('Продукт/что рекламируем:', '') || '';
+    try {
+      const response = await fetch('/api/trends-adapt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trend_video_id: id, project_id: selectedProject.id, brief: { niche, tone_of_voice: tone, product } })
+      });
+      const data = await response.json();
+      if (!response.ok) alert('Ошибка адаптации: ' + data.error);
+      else {
+        alert('✅ Сценарий готов:\n\n' + data.script_text);
+        await loadTrendsTab(selectedProject.id);
+      }
+    } catch (err) {
+      alert('Ошибка: ' + err.message);
+    }
+  }
+
+  async function updateTrendScriptStatus(scriptId, status) {
+    await supabase.from('trend_scripts').update({ status }).eq('id', scriptId);
+    await loadTrendsTab(selectedProject.id);
   }
 
   async function rateContentItem(item, rating) {
@@ -550,6 +632,7 @@ function App() {
     { id: 'analysis', label: 'Анализ', icon: '🔍' },
     { id: 'plan', label: 'Контент-План', icon: '📋' },
     { id: 'content', label: 'Контент', icon: '🎨' },
+    { id: 'trends', label: 'Тренды', icon: '🔥' },
     { id: 'posting', label: 'Постинг', icon: '📤' },
     { id: 'stats', label: 'Статистика', icon: '📊' },
     { id: 'finance', label: 'Финансы', icon: '💰' }
@@ -709,7 +792,7 @@ function App() {
                     <button
                       key={tab.id}
                       className={`project-tab-btn ${projectTab === tab.id ? 'active' : ''}`}
-                      onClick={() => { setProjectTab(tab.id); if (tab.id === 'stats') loadProjectStats(selectedProject.id); }}
+                      onClick={() => { setProjectTab(tab.id); if (tab.id === 'stats') loadProjectStats(selectedProject.id); if (tab.id === 'trends') loadTrendsTab(selectedProject.id); }}
                     >
                       <span>{tab.icon}</span> {tab.label}
                     </button>
@@ -875,6 +958,86 @@ function App() {
                         );
                       })}
                     </div>
+                  </div>
+                )}
+
+                {projectTab === 'trends' && (
+                  <div className="project-section">
+                    <h3>🔥 Тренды</h3>
+                    <p className="section-desc">Поиск вирусных видео по нише через официальные API YouTube и VK, анализ виральности и адаптация под ваш бренд</p>
+                    <p className="section-hint">👉 Впишите нишу/ключевые слова — найдём популярные короткие видео на YouTube и в VK, дальше можно проанализировать паттерн и превратить в сценарий под ваш продукт.</p>
+
+                    <div className="content-toolbar">
+                      <input
+                        className="content-filter content-search-input"
+                        type="text"
+                        placeholder="Например: рецепты завтраков, гастрономия"
+                        value={trendQuery}
+                        onChange={(e) => setTrendQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && searchTrends()}
+                      />
+                      <button className="section-btn chain-btn" onClick={searchTrends} disabled={trendLoading}>
+                        {trendLoading ? '⏳ Ищу...' : '🔍 Найти тренды'}
+                      </button>
+                    </div>
+
+                    {trendErrors.length > 0 && (
+                      <p className="section-hint" style={{ borderColor: 'rgba(239, 68, 68, 0.4)', background: 'rgba(239, 68, 68, 0.08)', color: '#fca5a5' }}>
+                        ⚠️ {trendErrors.join(' · ')}
+                      </p>
+                    )}
+
+                    <div className="content-list">
+                      {trendResults.length === 0 && <p className="empty">Пока ничего не найдено — начните поиск выше.</p>}
+                      {trendResults.map((v) => (
+                        <div key={v.id} className="content-item" style={{ flexWrap: 'wrap' }}>
+                          <span className="content-platform">{v.platform === 'youtube' ? '▶️ YouTube' : '🔵 VK'}</span>
+                          <div className="content-body">
+                            <a href={v.url} target="_blank" rel="noreferrer" className="content-title" style={{ color: '#38bdf8', textDecoration: 'none' }}>{v.title || 'Без названия'}</a>
+                            <span className="content-text">{v.channel_name} · 👁 {v.views?.toLocaleString('ru-RU')} · ❤️ {v.likes?.toLocaleString('ru-RU')} · 💬 {v.comments?.toLocaleString('ru-RU')}</span>
+                            {v.viral_analysis && (
+                              <span className="content-text">
+                                🎯 Хук: {v.viral_analysis.hook_guess}<br />
+                                📐 Структура: {v.viral_analysis.likely_structure}<br />
+                                😊 Тон: {v.viral_analysis.emotional_tone}
+                              </span>
+                            )}
+                          </div>
+                          <div className="content-actions">
+                            <button className="content-action-btn" onClick={() => analyzeTrend(v.id)} disabled={analyzingTrendId === v.id}>
+                              {analyzingTrendId === v.id ? '⏳' : '🧠 Анализ'}
+                            </button>
+                            <button className="content-action-btn" onClick={() => adaptTrend(v.id)}>✍️ Адаптировать</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {trendScripts.length > 0 && (
+                      <>
+                        <h3 style={{ marginTop: 24 }}>✍️ Сценарии</h3>
+                        <div className="content-list">
+                          {trendScripts.map((s) => (
+                            <div key={s.id} className="content-item">
+                              <div className="content-body">
+                                <span className="content-title">{s.brief?.niche} — {s.brief?.tone_of_voice}</span>
+                                <span className="content-text">{(s.script_text || '').slice(0, 150)}...</span>
+                              </div>
+                              <span className={`content-status status-${s.status === 'review' ? 'draft' : s.status === 'published' ? 'published' : 'scheduled'}`}>{s.status}</span>
+                              <div className="content-actions">
+                                <select className="content-filter" value={s.status} onChange={(e) => updateTrendScriptStatus(s.id, e.target.value)}>
+                                  <option value="review">На рассмотрении</option>
+                                  <option value="in_production">В работе</option>
+                                  <option value="filmed">Отснято</option>
+                                  <option value="published">Опубликовано</option>
+                                  <option value="rejected">Отклонено</option>
+                                </select>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
