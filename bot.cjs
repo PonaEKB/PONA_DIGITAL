@@ -156,7 +156,9 @@ const TOOLS = [
   { type: 'function', function: { name: 'complete_task', description: 'Отметить задачу выполненной по названию (требует подтверждения)', parameters: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] } } },
   { type: 'function', function: { name: 'add_finance', description: 'Добавить доход или расход (требует подтверждения)', parameters: { type: 'object', properties: { type: { type: 'string', enum: ['income', 'expense'] }, amount: { type: 'number' }, description: { type: 'string' } }, required: ['type', 'amount'] } } },
   { type: 'function', function: { name: 'get_finance_summary', description: 'Сводка по финансам: доходы, расходы, баланс', parameters: { type: 'object', properties: {}, required: [] } } },
-  { type: 'function', function: { name: 'list_pending_content', description: 'Список постов, ожидающих утверждения', parameters: { type: 'object', properties: { project_name: { type: 'string' } }, required: [] } } }
+  { type: 'function', function: { name: 'list_pending_content', description: 'Список постов, ожидающих утверждения', parameters: { type: 'object', properties: { project_name: { type: 'string' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_weather', description: 'Текущая погода в городе. Если пользователь не назвал город — используй Москву.', parameters: { type: 'object', properties: { city: { type: 'string', description: 'Город, например Moscow' } }, required: [] } } },
+  { type: 'function', function: { name: 'get_currency_rate', description: 'Официальный курс валюты к рублю (ЦБ РФ) — доллар, евро и др.', parameters: { type: 'object', properties: { currency_code: { type: 'string', description: 'Код валюты, например USD, EUR, CNY' } }, required: ['currency_code'] } } }
 ];
 
 const WRITE_TOOLS = new Set(['create_task', 'complete_task', 'add_finance']);
@@ -198,6 +200,30 @@ async function execReadTool(name, args) {
       }
       const { data } = await query.limit(10);
       return (data || []).map(d => ({ topic: d.topic, preview: (d.body || '').slice(0, 80) }));
+    }
+    case 'get_weather': {
+      const city = args.city || 'Moscow';
+      try {
+        const r = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=%C+%t,+ощущается+как+%f&m&lang=ru`);
+        if (!r.ok) return { error: 'Сервис погоды недоступен' };
+        const text = (await r.text()).trim();
+        return { city, weather: text };
+      } catch (err) {
+        return { error: 'Не удалось получить погоду: ' + err.message };
+      }
+    }
+    case 'get_currency_rate': {
+      try {
+        const r = await fetch('https://www.cbr-xml-daily.ru/daily_json.js');
+        if (!r.ok) return { error: 'Сервис курсов валют недоступен' };
+        const data = await r.json();
+        const code = (args.currency_code || 'USD').toUpperCase();
+        const rate = data.Valute?.[code];
+        if (!rate) return { error: `Валюта ${code} не найдена` };
+        return { currency: code, name: rate.Name, rate_rub: rate.Value, date: data.Date };
+      } catch (err) {
+        return { error: 'Не удалось получить курс: ' + err.message };
+      }
     }
     default:
       return { error: 'Неизвестный инструмент' };
@@ -250,7 +276,7 @@ async function runAgent(ctx, userText) {
         model: MODEL,
         max_tokens: 2048,
         messages: [
-          { role: 'system', content: 'Ты — AI-агент PONA DIGITAL, помогаешь владельцу управлять проектами, задачами и финансами. Отвечай кратко, по-русски. Если нужно действие с данными — используй инструменты.' },
+          { role: 'system', content: 'Ты — полноценный разговорный AI-агент PONA DIGITAL. Помогаешь владельцу управлять проектами, задачами и финансами, а также отвечаешь на любые обычные вопросы (погода, курсы валют, общие знания, разговор на любую тему) — как обычный AI-ассистент. Для данных о проектах/задачах/финансах, погоде и курсах валют используй инструменты вместо догадок. Отвечай кратко и по-русски.' },
           { role: 'user', content: userText }
         ],
         tools: TOOLS
