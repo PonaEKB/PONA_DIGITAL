@@ -19,7 +19,8 @@ export default async function handler(req, res) {
     return;
   }
 
-  const groupToken = process.env.VK_GROUP_ACCESS_TOKEN;
+  // VK market.* методы не работают с групповым (community) токеном — только с пользовательским,
+  // у которого есть права администратора сообщества. Проверено живым запросом (error_code 27).
   const userToken = process.env.VK_ACCESS_TOKEN;
   const groupId = process.env.VK_GROUP_ID;
 
@@ -27,7 +28,6 @@ export default async function handler(req, res) {
     const { data: ad, error: fetchErr } = await supabase.from('classified_ads').select('*').eq('id', ad_id).single();
     if (fetchErr || !ad) throw new Error('Объявление не найдено');
 
-    // market.getCategories не работает с групповым токеном ("method is unavailable with group auth") — читаем через пользовательский.
     // count — deprecated с версии 5.139, не передаём.
     const catRes = await fetch(`https://api.vk.com/method/market.getCategories?access_token=${userToken}&v=5.199`);
     const catData = await catRes.json();
@@ -56,7 +56,7 @@ export default async function handler(req, res) {
       description: ad.description.slice(0, 8000),
       category_id: String(category.id),
       price: String(ad.price || 0),
-      access_token: groupToken,
+      access_token: userToken,
       v: '5.199'
     });
 
