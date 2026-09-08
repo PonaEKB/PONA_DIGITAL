@@ -61,6 +61,7 @@ function App() {
   const [adForm, setAdForm] = useState({ title: '', description: '', category: '', price: '', contact_name: '', contact_phone: '' });
   const [adPublishing, setAdPublishing] = useState(null);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
+  const [reminders, setReminders] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [projectTab, setProjectTab] = useState('idea');
@@ -111,10 +112,17 @@ function App() {
     const { data: tasksData } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
     const { data: financesData } = await supabase.from('finances').select('*').order('date', { ascending: false });
     const { count: draftCount } = await supabase.from('content_items').select('id', { count: 'exact', head: true }).eq('status', 'draft');
+    const { data: remindersData } = await supabase.from('reminders').select('*').eq('status', 'pending').order('remind_at', { ascending: true });
     setProjects(projectsData || []);
     setAllTasks(tasksData || []);
     setFinances(financesData || []);
     setPendingApprovalCount(draftCount || 0);
+    setReminders(remindersData || []);
+  }
+
+  async function completeReminder(id) {
+    await supabase.from('reminders').update({ status: 'done' }).eq('id', id);
+    loadAllData();
   }
 
   const PLATFORMS = [
@@ -779,6 +787,12 @@ function App() {
               📝 Ждут вашего утверждения: <strong>{pendingApprovalCount}</strong> {pendingApprovalCount === 1 ? 'пост' : 'постов'} — проверьте личные сообщения бота или раздел «Контент» нужного проекта.
             </div>
           )}
+          {reminders.filter(r => r.remind_at <= new Date().toISOString().slice(0, 10)).map(r => (
+            <div key={r.id} className="approval-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <span>🔔 {r.title}</span>
+              <button className="section-btn" onClick={() => completeReminder(r.id)}>✅ Готово</button>
+            </div>
+          ))}
           <div className="stats-grid">
             <div className="stat-card"><img src="/icon/projects.png" alt="" className="stat-icon-img" /><span className="stat-value">{projects.length}</span><span className="stat-label">Проектов</span></div>
             <div className="stat-card"><img src="/icon/tasks.png" alt="" className="stat-icon-img" /><span className="stat-value">{totalTasks}</span><span className="stat-label">Всего задач</span></div>

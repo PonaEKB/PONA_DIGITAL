@@ -678,6 +678,34 @@ async function checkFinanceAccounts() {
   }
 }
 
+async function checkReminders() {
+  if (!OWNER_CHAT_ID) return;
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: due } = await supabase
+      .from('reminders')
+      .select('*')
+      .eq('status', 'pending')
+      .is('notified_at', null)
+      .lte('remind_at', today);
+    if (!due || due.length === 0) return;
+
+    for (const reminder of due) {
+      const claimed = await supabase
+        .from('reminders')
+        .update({ notified_at: new Date().toISOString() })
+        .eq('id', reminder.id)
+        .is('notified_at', null)
+        .select('id');
+      if (!claimed.data || claimed.data.length === 0) continue;
+
+      await bot.telegram.sendMessage(OWNER_CHAT_ID, `🔔 Напоминание: ${reminder.title}`);
+    }
+  } catch (err) {
+    console.log(`⚠️ Ошибка проверки напоминаний: ${err.message}`);
+  }
+}
+
 async function captureSubscriberSnapshot() {
   if (!CHANNEL_ID || !STATS_PROJECT_ID) return;
   try {
@@ -807,6 +835,10 @@ if (OWNER_CHAT_ID) {
   setInterval(checkFinanceAccounts, 24 * 60 * 60 * 1000);
   checkFinanceAccounts();
   console.log('💰 Проверка балансов и напоминания по финансовым кабинетам включены (раз в сутки)');
+
+  setInterval(checkReminders, 60 * 60 * 1000);
+  checkReminders();
+  console.log('🔔 Проверка напоминаний включена (раз в час)');
 } else {
   console.log('⚠️ OWNER_CHAT_ID не задан — черновики не будут приходить на утверждение в личку');
 }
