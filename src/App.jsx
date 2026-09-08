@@ -57,6 +57,9 @@ function App() {
   const [finances, setFinances] = useState([]);
   const [financeTab, setFinanceTab] = useState('expenses');
   const [financeAccounts, setFinanceAccounts] = useState([]);
+  const [ads, setAds] = useState([]);
+  const [adForm, setAdForm] = useState({ title: '', description: '', category: '', price: '', contact_name: '', contact_phone: '' });
+  const [adPublishing, setAdPublishing] = useState(null);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [selectedProject, setSelectedProject] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -384,6 +387,90 @@ function App() {
     loadFinanceAccounts();
   }
 
+  const AD_PLATFORMS = [
+    { key: 'vk', label: 'VK Объявления', icon: '🔵', mode: 'auto' },
+    { key: 'avito', label: 'Avito', icon: '🟢', mode: 'manual' },
+    { key: 'kwork', label: 'Kwork', icon: '🟣', mode: 'manual' },
+    { key: 'youdo', label: 'YouDo', icon: '🟠', mode: 'manual' }
+  ];
+
+  async function loadAds() {
+    const { data } = await supabase
+      .from('classified_ads')
+      .select('*, classified_ad_publications(*)')
+      .order('created_at', { ascending: false });
+    setAds(data || []);
+  }
+
+  async function createAd() {
+    if (!adForm.title.trim() || !adForm.description.trim()) {
+      alert('Заполните заголовок и описание объявления');
+      return;
+    }
+    await supabase.from('classified_ads').insert({
+      title: adForm.title.trim(),
+      description: adForm.description.trim(),
+      category: adForm.category.trim() || null,
+      price: adForm.price ? parseFloat(adForm.price) : null,
+      contact_name: adForm.contact_name.trim() || null,
+      contact_phone: adForm.contact_phone.trim() || null,
+      status: 'ready'
+    });
+    setAdForm({ title: '', description: '', category: '', price: '', contact_name: '', contact_phone: '' });
+    loadAds();
+  }
+
+  async function deleteAd(id) {
+    if (!confirm('Удалить объявление и все его публикации?')) return;
+    await supabase.from('classified_ads').delete().eq('id', id);
+    loadAds();
+  }
+
+  function pubUrl(ad, platform) {
+    return (ad.classified_ad_publications || []).find(p => p.platform === platform)?.external_url || null;
+  }
+
+  function formatAdText(ad) {
+    const price = ad.price ? `${ad.price} ₽` : 'Цена договорная';
+    const contact = [ad.contact_name, ad.contact_phone].filter(Boolean).join(', ');
+    return `${ad.title}\n\n${ad.description}\n\nЦена: ${price}${contact ? `\nКонтакты: ${contact}` : ''}`;
+  }
+
+  async function copyAdText(ad) {
+    try {
+      await navigator.clipboard.writeText(formatAdText(ad));
+      alert('Текст объявления скопирован — вставьте его на площадке вручную.');
+    } catch (_) {
+      prompt('Скопируйте текст объявления:', formatAdText(ad));
+    }
+  }
+
+  async function markAdManualPublished(adId, platform) {
+    await supabase.from('classified_ad_publications').upsert(
+      { ad_id: adId, platform, status: 'manual', published_at: new Date().toISOString() },
+      { onConflict: 'ad_id,platform' }
+    );
+    loadAds();
+  }
+
+  async function publishAdToVk(adId) {
+    setAdPublishing(adId);
+    try {
+      const res = await fetch('/api/ads-publish-vk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ad_id: adId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка публикации в VK');
+    } catch (err) {
+      alert('Не удалось опубликовать в VK: ' + err.message);
+    } finally {
+      setAdPublishing(null);
+      loadAds();
+    }
+  }
+
   function getTaskDeadlineStatus(deadline) {
     if (!deadline) return null;
     const today = new Date();
@@ -677,6 +764,9 @@ function App() {
           <button className={`nav-btn ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => { setActiveTab('finance'); loadFinanceAccounts(); }}>
             <span className="nav-emoji">💰</span> Финансы
           </button>
+          <button className={`nav-btn ${activeTab === 'ads' ? 'active' : ''}`} onClick={() => { setActiveTab('ads'); loadAds(); }}>
+            <span className="nav-emoji">📋</span> Доски объявлений
+          </button>
         </nav>
         <button onClick={handleLogout} className="logout-btn"><span className="nav-emoji">🚪</span> Выйти</button>
       </header>
@@ -835,6 +925,69 @@ function App() {
               </div>
             </div>
           )}
+        </div>
+      ) : activeTab === 'ads' ? (
+        <div className="ads">
+          <h1 className="dashboard-title">Доски объявлений</h1>
+          <p className="section-hint">Создайте одно универсальное объявление и разместите его на нескольких площадках. VK публикуется автоматически по API; Avito, Kwork и YouDo не дают публичного API для этого — CRM готовит текст под копирование, а отметку «опубликовано» вы ставите вручную.</p>
+
+          <div style={{ maxWidth: 700, margin: '0 auto 32px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input className="idea-input" placeholder="Заголовок объявления" value={adForm.title} onChange={e => setAdForm({ ...adForm, title: e.target.value })} />
+            <textarea className="idea-input" placeholder="Описание услуги" rows={4} value={adForm.description} onChange={e => setAdForm({ ...adForm, description: e.target.value })} />
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <input className="idea-input" style={{ flex: '1 1 160px' }} placeholder="Категория" value={adForm.category} onChange={e => setAdForm({ ...adForm, category: e.target.value })} />
+              <input className="idea-input" style={{ flex: '1 1 120px' }} placeholder="Цена, ₽" type="number" value={adForm.price} onChange={e => setAdForm({ ...adForm, price: e.target.value })} />
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <input className="idea-input" style={{ flex: '1 1 160px' }} placeholder="Имя для связи" value={adForm.contact_name} onChange={e => setAdForm({ ...adForm, contact_name: e.target.value })} />
+              <input className="idea-input" style={{ flex: '1 1 160px' }} placeholder="Телефон" value={adForm.contact_phone} onChange={e => setAdForm({ ...adForm, contact_phone: e.target.value })} />
+            </div>
+            <button className="section-btn" onClick={createAd}>➕ Создать объявление</button>
+          </div>
+
+          <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {ads.length === 0 && <p className="empty">Пока нет объявлений</p>}
+            {ads.map((ad) => (
+              <div key={ad.id} className="content-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                <div className="content-body">
+                  <span className="content-title">{ad.title}</span>
+                  <span className="content-text">{ad.description}</span>
+                  <span className="content-text">{ad.price ? `${ad.price} ₽` : 'Цена договорная'}{ad.category ? ` · ${ad.category}` : ''}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                  {AD_PLATFORMS.map((platform) => {
+                    const pub = (ad.classified_ad_publications || []).find(p => p.platform === platform.key);
+                    const status = pub?.status;
+                    if (platform.mode === 'auto') {
+                      return (
+                        <button
+                          key={platform.key}
+                          className="section-btn"
+                          disabled={adPublishing === ad.id}
+                          onClick={() => publishAdToVk(ad.id)}
+                          title={pub?.error_message || ''}
+                        >
+                          {platform.icon} {platform.label}: {status === 'published' ? '✅ опубликовано' : status === 'failed' ? '❌ ошибка (повторить)' : adPublishing === ad.id ? '⏳...' : 'опубликовать'}
+                        </button>
+                      );
+                    }
+                    return (
+                      <React.Fragment key={platform.key}>
+                        <button className="section-btn" onClick={() => copyAdText(ad)}>{platform.icon} {platform.label}: скопировать текст</button>
+                        {status !== 'manual' ? (
+                          <button className="section-btn" onClick={() => markAdManualPublished(ad.id, platform.key)}>отметить как опубликовано</button>
+                        ) : (
+                          <span className="content-text">✅ отмечено вручную</span>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                  {pubUrl(ad, 'vk') && <a href={pubUrl(ad, 'vk')} target="_blank" rel="noreferrer" className="content-text" style={{ color: '#38bdf8' }}>Открыть в VK →</a>}
+                </div>
+                <button className="content-action-btn delete" style={{ alignSelf: 'flex-end', marginTop: 8 }} onClick={() => deleteAd(ad.id)}>🗑️ Удалить объявление</button>
+              </div>
+            ))}
+          </div>
         </div>
       ) : (
         <div className="main">
