@@ -65,7 +65,12 @@ export default async function handler(req, res) {
     if (addData.error) throw new Error(`VK: ${addData.error.error_msg}`);
 
     const marketId = addData.response?.market_item_id;
-    const externalUrl = marketId ? `https://vk.com/market-${groupId}?w=product-${groupId}_${marketId}` : null;
+    let externalUrl = null;
+    if (marketId != null) {
+      const getRes = await fetch(`https://api.vk.com/method/market.getById?item_ids=-${groupId}_${marketId}&access_token=${userToken}&v=5.199`);
+      const getData = await getRes.json();
+      externalUrl = getData.response?.items?.[0]?.market_url || `https://vk.com/market-${groupId}?w=product-${groupId}_${marketId}`;
+    }
 
     await saveResult(ad_id, {
       status: 'published',
