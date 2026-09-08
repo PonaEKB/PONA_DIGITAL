@@ -678,6 +678,29 @@ async function checkFinanceAccounts() {
   }
 }
 
+// Проверяем напоминания дважды в сутки: 06:00 и 22:00 по Екатеринбургу (UTC+5, без перевода времени) — 01:00 и 17:00 UTC.
+const REMINDER_CHECK_UTC_HOURS = [1, 17];
+
+function msUntilNextReminderCheck() {
+  const now = new Date();
+  const dayStartUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  let next = null;
+  for (const dayOffset of [0, 1]) {
+    for (const hour of REMINDER_CHECK_UTC_HOURS) {
+      const candidate = dayStartUTC + dayOffset * 86400000 + hour * 3600000;
+      if (candidate > now.getTime() && (next === null || candidate < next)) next = candidate;
+    }
+  }
+  return next - now.getTime();
+}
+
+function scheduleReminderChecks() {
+  setTimeout(async () => {
+    await checkReminders();
+    scheduleReminderChecks();
+  }, msUntilNextReminderCheck());
+}
+
 async function checkReminders() {
   if (!OWNER_CHAT_ID) return;
   try {
@@ -835,9 +858,9 @@ if (OWNER_CHAT_ID) {
   checkFinanceAccounts();
   console.log('💰 Проверка балансов и напоминания по финансовым кабинетам включены (раз в сутки)');
 
-  setInterval(checkReminders, 5 * 60 * 1000);
   checkReminders();
-  console.log('🔔 Проверка напоминаний включена (раз в 5 минут)');
+  scheduleReminderChecks();
+  console.log('🔔 Проверка напоминаний включена (дважды в сутки: 06:00 и 22:00 по Екатеринбургу)');
 } else {
   console.log('⚠️ OWNER_CHAT_ID не задан — черновики не будут приходить на утверждение в личку');
 }
