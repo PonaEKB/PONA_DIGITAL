@@ -27,13 +27,28 @@ export default async function handler(req, res) {
     const { data: ad, error: fetchErr } = await supabase.from('classified_ads').select('*').eq('id', ad_id).single();
     if (fetchErr || !ad) throw new Error('Объявление не найдено');
 
-    // market.getCategories не работает с групповым токеном ("method is unavailable with group auth") — читаем через пользовательский
-    const catRes = await fetch(`https://api.vk.com/method/market.getCategories?count=1000&access_token=${userToken}&v=5.199`);
+    // market.getCategories не работает с групповым токеном ("method is unavailable with group auth") — читаем через пользовательский.
+    // count — deprecated с версии 5.139, не передаём.
+    const catRes = await fetch(`https://api.vk.com/method/market.getCategories?access_token=${userToken}&v=5.199`);
     const catData = await catRes.json();
     if (catData.error) throw new Error(`VK (категории): ${catData.error.error_msg}`);
-    const categories = catData.response?.items || [];
-    const category = categories.find(c => c.name?.toLowerCase().includes('услуг')) || categories[0];
-    if (!category) throw new Error('VK не вернул ни одной категории Товаров');
+    const tree = catData.response?.items || [];
+
+    const leaves = [];
+    (function walk(nodes) {
+      for (const node of nodes) {
+        if (node.children?.length) walk(node.children);
+        else leaves.push(node);
+      }
+    })(tree);
+    if (!leaves.length) throw new Error('VK не вернул ни одной категории Товаров');
+
+    const wanted = (ad.category || '').toLowerCase();
+    const category =
+      (wanted && leaves.find(c => c.name?.toLowerCase().includes(wanted))) ||
+      leaves.find(c => c.name?.toLowerCase().includes('другие услуги')) ||
+      leaves.find(c => c.name?.toLowerCase().includes('услуг')) ||
+      leaves[0];
 
     const params = new URLSearchParams({
       owner_id: `-${groupId}`,
