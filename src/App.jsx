@@ -58,6 +58,10 @@ function App() {
   const [financeTab, setFinanceTab] = useState('expenses');
   const [financeAccounts, setFinanceAccounts] = useState([]);
   const [ads, setAds] = useState([]);
+  const [musicTracks, setMusicTracks] = useState([]);
+  const [selectedTrack, setSelectedTrack] = useState(null);
+  const [lyricsTheme, setLyricsTheme] = useState('');
+  const [musicBusy, setMusicBusy] = useState(null);
   const [adForm, setAdForm] = useState({ title: '', description: '', category: '', price: '', contact_name: '', contact_phone: '' });
   const [adPublishing, setAdPublishing] = useState(null);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
@@ -499,6 +503,95 @@ function App() {
     }
   }
 
+  async function loadMusicTracks() {
+    const { data } = await supabase.from('music_tracks').select('*').order('created_at', { ascending: false });
+    setMusicTracks(data || []);
+  }
+
+  async function createMusicTrack() {
+    const title = prompt('Название трека:');
+    if (!title) return;
+    const { data } = await supabase.from('music_tracks').insert({ title: title.trim() }).select('*').single();
+    await loadMusicTracks();
+    if (data) setSelectedTrack(data);
+  }
+
+  async function deleteMusicTrack(id) {
+    if (!confirm('Удалить трек?')) return;
+    await supabase.from('music_tracks').delete().eq('id', id);
+    setSelectedTrack(null);
+    loadMusicTracks();
+  }
+
+  async function uploadMusicFile(file, folder) {
+    const path = `${folder}/${crypto.randomUUID()}.${file.name.split('.').pop() || 'mp3'}`;
+    const { error } = await supabase.storage.from('music-tracks').upload(path, file);
+    if (error) throw new Error(error.message);
+    const { data } = supabase.storage.from('music-tracks').getPublicUrl(path);
+    return data.publicUrl;
+  }
+
+  async function handleReferenceUpload(e, track) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMusicBusy(track.id);
+    try {
+      const url = await uploadMusicFile(file, 'reference');
+      await supabase.from('music_tracks').update({ reference_url: url }).eq('id', track.id);
+      await loadMusicTracks();
+      setSelectedTrack(prev => prev && { ...prev, reference_url: url });
+    } catch (err) {
+      alert('Ошибка загрузки: ' + err.message);
+    } finally {
+      setMusicBusy(null);
+    }
+  }
+
+  async function handleFinalUpload(e, track) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMusicBusy(track.id);
+    try {
+      const url = await uploadMusicFile(file, 'final');
+      await supabase.from('music_tracks').update({ audio_url: url, status: 'generated' }).eq('id', track.id);
+      await loadMusicTracks();
+      setSelectedTrack(prev => prev && { ...prev, audio_url: url, status: 'generated' });
+    } catch (err) {
+      alert('Ошибка загрузки: ' + err.message);
+    } finally {
+      setMusicBusy(null);
+    }
+  }
+
+  async function runMusicStep(endpoint, body, trackId) {
+    setMusicBusy(trackId);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка');
+      await loadMusicTracks();
+      setSelectedTrack(data);
+    } catch (err) {
+      alert('Ошибка: ' + err.message);
+    } finally {
+      setMusicBusy(null);
+    }
+  }
+
+  async function copySunoPrompt(track) {
+    const text = `${track.suno_prompt || ''}\n\n${track.lyrics || ''}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Промпт и текст песни скопированы — вставьте в Suno.');
+    } catch (_) {
+      prompt('Скопируйте промпт и текст:', text);
+    }
+  }
+
   function getTaskDeadlineStatus(deadline) {
     if (!deadline) return null;
     const today = new Date();
@@ -795,6 +888,9 @@ function App() {
           <button className={`nav-btn ${activeTab === 'ads' ? 'active' : ''}`} onClick={() => { setActiveTab('ads'); loadAds(); }}>
             <span className="nav-emoji">📋</span> Доски объявлений
           </button>
+          <button className={`nav-btn ${activeTab === 'music' ? 'active' : ''}`} onClick={() => { setActiveTab('music'); setSelectedTrack(null); loadMusicTracks(); }}>
+            <span className="nav-emoji">🎵</span> Музыка
+          </button>
         </nav>
         <button onClick={handleLogout} className="logout-btn"><span className="nav-emoji">🚪</span> Выйти</button>
       </header>
@@ -988,6 +1084,91 @@ function App() {
               </div>
             ))}
           </div>
+        </div>
+      ) : activeTab === 'music' ? (
+        <div className="music">
+          <h1 className="dashboard-title">Музыка</h1>
+
+          {!selectedTrack ? (
+            <>
+              <div style={{ maxWidth: 700, margin: '0 auto 24px', textAlign: 'center' }}>
+                <button className="section-btn" onClick={createMusicTrack}>➕ Новый трек</button>
+              </div>
+              <div style={{ maxWidth: 700, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {musicTracks.length === 0 && <p className="empty">Пока нет треков</p>}
+                {musicTracks.map((t) => (
+                  <div key={t.id} className="content-item" style={{ cursor: 'pointer' }} onClick={() => setSelectedTrack(t)}>
+                    <div className="content-body">
+                      <span className="content-title">🎵 {t.title}</span>
+                      <span className="content-text">{{
+                        draft: 'Черновик — нужен референс',
+                        analyzed: 'Референс проанализирован',
+                        lyrics_ready: 'Текст готов',
+                        prompt_ready: 'Промпт для Suno готов',
+                        generated: '✅ Готовый трек загружен'
+                      }[t.status]}</span>
+                    </div>
+                    <button className="content-action-btn delete" onClick={(e) => { e.stopPropagation(); deleteMusicTrack(t.id); }}>🗑️</button>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div style={{ maxWidth: 700, margin: '0 auto' }}>
+              <button className="section-btn" onClick={() => setSelectedTrack(null)} style={{ marginBottom: 16 }}>← Ко всем трекам</button>
+              <h2 style={{ color: '#fff', fontWeight: 400 }}>🎵 {selectedTrack.title}</h2>
+
+              <div className="content-item" style={{ flexDirection: 'column', alignItems: 'stretch', marginTop: 16 }}>
+                <span className="content-title">1. Референс-трек</span>
+                {selectedTrack.reference_url ? (
+                  <audio controls src={selectedTrack.reference_url} style={{ width: '100%', marginTop: 8 }} />
+                ) : (
+                  <p className="content-text">Загрузите mp3 трендового трека, который хотите использовать как ориентир по звучанию.</p>
+                )}
+                <input type="file" accept="audio/*" onChange={(e) => handleReferenceUpload(e, selectedTrack)} style={{ marginTop: 8 }} />
+                {selectedTrack.reference_url && (
+                  <button className="section-btn" style={{ marginTop: 8 }} disabled={musicBusy === selectedTrack.id} onClick={() => runMusicStep('/api/music-analyze', { track_id: selectedTrack.id }, selectedTrack.id)}>
+                    {musicBusy === selectedTrack.id ? '⏳ Анализирую...' : '🔍 Проанализировать референс'}
+                  </button>
+                )}
+                {selectedTrack.analysis && (
+                  <div className="content-text" style={{ marginTop: 8 }}>
+                    🎧 Жанр: {selectedTrack.analysis.genre_guess} · Вокал: {selectedTrack.analysis.vocal} · Темп: {selectedTrack.analysis.tempo_feel} · Энергия: {selectedTrack.analysis.energy}<br />
+                    Настроение: {selectedTrack.analysis.mood} · Инструменты: {selectedTrack.analysis.instrumentation} · Стиль/эпоха: {selectedTrack.analysis.era_style}
+                  </div>
+                )}
+              </div>
+
+              <div className="content-item" style={{ flexDirection: 'column', alignItems: 'stretch', marginTop: 16 }}>
+                <span className="content-title">2. Текст песни</span>
+                <input className="idea-input" placeholder="Тема / настроение песни" value={lyricsTheme} onChange={e => setLyricsTheme(e.target.value)} style={{ marginTop: 8 }} />
+                <button className="section-btn" style={{ marginTop: 8 }} disabled={musicBusy === selectedTrack.id || !lyricsTheme.trim()} onClick={() => runMusicStep('/api/music-lyrics', { track_id: selectedTrack.id, theme: lyricsTheme }, selectedTrack.id)}>
+                  {musicBusy === selectedTrack.id ? '⏳ Пишу текст...' : '✍️ Сгенерировать текст'}
+                </button>
+                {selectedTrack.lyrics && <pre className="content-text" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{selectedTrack.lyrics}</pre>}
+              </div>
+
+              <div className="content-item" style={{ flexDirection: 'column', alignItems: 'stretch', marginTop: 16 }}>
+                <span className="content-title">3. Промпт для Suno</span>
+                <button className="section-btn" style={{ marginTop: 8 }} disabled={musicBusy === selectedTrack.id || !selectedTrack.lyrics} onClick={() => runMusicStep('/api/music-prompt', { track_id: selectedTrack.id }, selectedTrack.id)}>
+                  {musicBusy === selectedTrack.id ? '⏳ Собираю промпт...' : '🎼 Собрать промпт'}
+                </button>
+                {selectedTrack.suno_prompt && (
+                  <>
+                    <p className="content-text" style={{ marginTop: 8 }}>{selectedTrack.suno_prompt}</p>
+                    <button className="section-btn" onClick={() => copySunoPrompt(selectedTrack)}>📋 Скопировать промпт + текст для Suno</button>
+                  </>
+                )}
+              </div>
+
+              <div className="content-item" style={{ flexDirection: 'column', alignItems: 'stretch', marginTop: 16 }}>
+                <span className="content-title">4. Готовый трек</span>
+                <p className="content-text">Сгенерируйте трек в Suno вручную (промпт + текст выше), скачайте mp3 и загрузите сюда как готовый продукт.</p>
+                {selectedTrack.audio_url && <audio controls src={selectedTrack.audio_url} style={{ width: '100%', marginTop: 8 }} />}
+                <input type="file" accept="audio/*" onChange={(e) => handleFinalUpload(e, selectedTrack)} style={{ marginTop: 8 }} />
+              </div>
+            </div>
+          )}
         </div>
       ) : activeTab === 'ads' ? (
         <div className="ads">
