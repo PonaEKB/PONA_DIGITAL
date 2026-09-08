@@ -681,13 +681,12 @@ async function checkFinanceAccounts() {
 async function checkReminders() {
   if (!OWNER_CHAT_ID) return;
   try {
-    const today = new Date().toISOString().slice(0, 10);
     const { data: due } = await supabase
       .from('reminders')
       .select('*')
       .eq('status', 'pending')
       .is('notified_at', null)
-      .lte('remind_at', today);
+      .lte('remind_at', new Date().toISOString());
     if (!due || due.length === 0) return;
 
     for (const reminder of due) {
@@ -836,9 +835,9 @@ if (OWNER_CHAT_ID) {
   checkFinanceAccounts();
   console.log('💰 Проверка балансов и напоминания по финансовым кабинетам включены (раз в сутки)');
 
-  setInterval(checkReminders, 60 * 60 * 1000);
+  setInterval(checkReminders, 5 * 60 * 1000);
   checkReminders();
-  console.log('🔔 Проверка напоминаний включена (раз в час)');
+  console.log('🔔 Проверка напоминаний включена (раз в 5 минут)');
 } else {
   console.log('⚠️ OWNER_CHAT_ID не задан — черновики не будут приходить на утверждение в личку');
 }

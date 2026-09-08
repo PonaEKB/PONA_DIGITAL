@@ -62,6 +62,7 @@ function App() {
   const [adPublishing, setAdPublishing] = useState(null);
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [reminders, setReminders] = useState([]);
+  const [reminderForm, setReminderForm] = useState({ title: '', when: '' });
   const [selectedProject, setSelectedProject] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [projectTab, setProjectTab] = useState('idea');
@@ -112,7 +113,7 @@ function App() {
     const { data: tasksData } = await supabase.from('tasks').select('*').order('created_at', { ascending: false });
     const { data: financesData } = await supabase.from('finances').select('*').order('date', { ascending: false });
     const { count: draftCount } = await supabase.from('content_items').select('id', { count: 'exact', head: true }).eq('status', 'draft');
-    const { data: remindersData } = await supabase.from('reminders').select('*').eq('status', 'pending').order('remind_at', { ascending: true });
+    const { data: remindersData } = await supabase.from('reminders').select('*').order('remind_at', { ascending: true });
     setProjects(projectsData || []);
     setAllTasks(tasksData || []);
     setFinances(financesData || []);
@@ -122,6 +123,25 @@ function App() {
 
   async function completeReminder(id) {
     await supabase.from('reminders').update({ status: 'done' }).eq('id', id);
+    loadAllData();
+  }
+
+  async function createReminder() {
+    if (!reminderForm.title.trim() || !reminderForm.when) {
+      alert('Укажите текст напоминания и дату/время');
+      return;
+    }
+    await supabase.from('reminders').insert({
+      title: reminderForm.title.trim(),
+      remind_at: new Date(reminderForm.when).toISOString()
+    });
+    setReminderForm({ title: '', when: '' });
+    loadAllData();
+  }
+
+  async function deleteReminder(id) {
+    if (!confirm('Удалить напоминание?')) return;
+    await supabase.from('reminders').delete().eq('id', id);
     loadAllData();
   }
 
@@ -787,7 +807,7 @@ function App() {
               📝 Ждут вашего утверждения: <strong>{pendingApprovalCount}</strong> {pendingApprovalCount === 1 ? 'пост' : 'постов'} — проверьте личные сообщения бота или раздел «Контент» нужного проекта.
             </div>
           )}
-          {reminders.filter(r => r.remind_at <= new Date().toISOString().slice(0, 10)).map(r => (
+          {reminders.filter(r => new Date(r.remind_at) <= new Date()).map(r => (
             <div key={r.id} className="approval-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
               <span>🔔 {r.title}</span>
               <button className="section-btn" onClick={() => completeReminder(r.id)}>✅ Готово</button>
@@ -802,6 +822,11 @@ function App() {
             <div className="stat-card"><img src="/icon/done.png" alt="" className="stat-icon-img" /><span className="stat-value">{doneCount}</span><span className="stat-label">Готово</span></div>
             <div className="stat-card"><img src="/icon/chart.png" alt="" className="stat-icon-img" /><span className="stat-value">{completionRate}%</span><span className="stat-label">Выполнение</span></div>
             <div className="stat-card"><img src="/icon/money.png" alt="" className="stat-icon-img" /><span className="stat-value">{balance} ₽</span><span className="stat-label">Баланс</span></div>
+            <div className="stat-card" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('reminders')}>
+              <span className="stat-icon-img" style={{ fontSize: 32, lineHeight: 1 }}>🔔</span>
+              <span className="stat-value">{reminders.filter(r => r.status === 'pending').length}</span>
+              <span className="stat-label">Напоминания</span>
+            </div>
           </div>
 
           <div className="ai-dashboard-block" onClick={() => setShowAiChat(true)}>
@@ -939,6 +964,30 @@ function App() {
               </div>
             </div>
           )}
+        </div>
+      ) : activeTab === 'reminders' ? (
+        <div className="reminders">
+          <h1 className="dashboard-title">Напоминания</h1>
+
+          <div style={{ maxWidth: 600, margin: '0 auto 32px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input className="idea-input" placeholder="Текст напоминания" value={reminderForm.title} onChange={e => setReminderForm({ ...reminderForm, title: e.target.value })} />
+            <input className="idea-input" type="datetime-local" value={reminderForm.when} onChange={e => setReminderForm({ ...reminderForm, when: e.target.value })} />
+            <button className="section-btn" onClick={createReminder}>➕ Добавить напоминание</button>
+          </div>
+
+          <div style={{ maxWidth: 700, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {reminders.length === 0 && <p className="empty">Пока нет напоминаний</p>}
+            {reminders.map((r) => (
+              <div key={r.id} className="content-item">
+                <div className="content-body">
+                  <span className="content-title" style={{ textDecoration: r.status === 'done' ? 'line-through' : 'none', opacity: r.status === 'done' ? 0.5 : 1 }}>{r.title}</span>
+                  <span className="content-text">🕐 {new Date(r.remind_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}{r.status === 'done' ? ' · выполнено' : ''}</span>
+                </div>
+                {r.status !== 'done' && <button className="content-action-btn" onClick={() => completeReminder(r.id)}>✅</button>}
+                <button className="content-action-btn delete" onClick={() => deleteReminder(r.id)}>🗑️</button>
+              </div>
+            ))}
+          </div>
         </div>
       ) : activeTab === 'ads' ? (
         <div className="ads">
