@@ -3,6 +3,7 @@ import { supabase } from './supabaseClient';
 import './App.css';
 
 function SubscriberChart({ snapshots }) {
+  const [hoverIdx, setHoverIdx] = useState(null);
   const width = 720;
   const height = 220;
   const padding = { top: 16, right: 16, bottom: 28, left: 44 };
@@ -26,24 +27,70 @@ function SubscriberChart({ snapshots }) {
   });
 
   const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const areaPath = `${linePath} L${points[points.length - 1]?.x.toFixed(1)},${padding.top + plotH} L${points[0]?.x.toFixed(1)},${padding.top + plotH} Z`;
   const gridLines = [0, 0.5, 1].map(f => padding.top + plotH * f);
   const gridLabels = [maxV, Math.round((maxV + minV) / 2), minV];
+  const hovered = hoverIdx != null ? points[hoverIdx] : null;
+
+  function handleMove(e) {
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = width / rect.width;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    let nearest = 0;
+    let best = Infinity;
+    points.forEach((p, i) => {
+      const d = Math.abs(p.x - mouseX);
+      if (d < best) { best = d; nearest = i; }
+    });
+    setHoverIdx(nearest);
+  }
 
   return (
     <div className="chart-wrap">
-      <svg viewBox={`0 0 ${width} ${height}`} className="chart-svg" role="img" aria-label="График числа подписчиков за 30 дней">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="chart-svg"
+        role="img"
+        aria-label="График числа подписчиков за 30 дней"
+        onMouseMove={handleMove}
+        onMouseLeave={() => setHoverIdx(null)}
+      >
+        <defs>
+          <linearGradient id="subscriberAreaGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+          </linearGradient>
+        </defs>
         {gridLines.map((y, i) => (
           <g key={i}>
             <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} className="chart-grid-line" />
             <text x={padding.left - 8} y={y + 4} className="chart-axis-label" textAnchor="end">{gridLabels[i]}</text>
           </g>
         ))}
+        <path d={areaPath} fill="url(#subscriberAreaGradient)" stroke="none" />
         <path d={linePath} className="chart-line" fill="none" />
         {points.map((p, i) => (
-          <circle key={i} cx={p.x} cy={p.y} r="4" className="chart-dot">
-            <title>{p.date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: {p.v} подписчиков</title>
-          </circle>
+          <circle key={i} cx={p.x} cy={p.y} r={hoverIdx === i ? 5.5 : 4} className="chart-dot" />
         ))}
+        {hovered && (
+          <g pointerEvents="none">
+            <line x1={hovered.x} y1={padding.top} x2={hovered.x} y2={padding.top + plotH} className="chart-crosshair" />
+            <circle cx={hovered.x} cy={hovered.y} r="6" className="chart-dot-highlight" />
+            {(() => {
+              const label = `${hovered.date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} — ${hovered.v}`;
+              const boxW = 15 + label.length * 6.2;
+              const boxX = Math.min(Math.max(hovered.x - boxW / 2, padding.left), width - padding.right - boxW);
+              const boxY = Math.max(hovered.y - 34, padding.top);
+              return (
+                <g>
+                  <rect x={boxX} y={boxY} width={boxW} height={22} rx="6" className="chart-tooltip-bg" />
+                  <text x={boxX + boxW / 2} y={boxY + 15} textAnchor="middle" className="chart-tooltip-text">{label}</text>
+                </g>
+              );
+            })()}
+          </g>
+        )}
         <text x={padding.left} y={height - 6} className="chart-axis-label">{points[0]?.date.toLocaleDateString('ru-RU')}</text>
         <text x={width - padding.right} y={height - 6} className="chart-axis-label" textAnchor="end">{points[points.length - 1]?.date.toLocaleDateString('ru-RU')}</text>
       </svg>
@@ -1723,15 +1770,29 @@ function App() {
                       const rows = Object.entries(byRubric)
                         .map(([rubric, r]) => ({ rubric, ...r, score: r.good - r.bad }))
                         .sort((a, b) => b.score - a.score);
+                      const maxVal = Math.max(...rows.flatMap(r => [r.good, r.bad]), 1);
                       return (
                         <div className="project-section" style={{ marginTop: 16, padding: 18 }}>
                           <h3>🏆 Топ рубрик</h3>
                           <p className="section-hint">По вашим оценкам 👍/👎 в разделе «Контент». Эти данные используются при генерации нового контента — топовые рубрики будут предлагаться чаще.</p>
+                          <div className="rubric-legend">
+                            <span><span className="rubric-legend-swatch good"></span> Понравилось</span>
+                            <span><span className="rubric-legend-swatch bad"></span> Не понравилось</span>
+                          </div>
                           <div className="rubric-rank-list">
                             {rows.map(r => (
-                              <div key={r.rubric} className="rubric-rank-row">
+                              <div key={r.rubric} className="rubric-rank-row-viz">
                                 <span className="rubric-rank-name">{r.rubric}</span>
-                                <span className="rubric-rank-score">👍 {r.good} &nbsp; 👎 {r.bad}</span>
+                                <div className="rubric-bar-track">
+                                  <div className="rubric-bar-col rubric-bar-col-bad">
+                                    <span className="rubric-bar-value bad">{r.bad || ''}</span>
+                                    <div className="rubric-bar-bad" style={{ width: `${(r.bad / maxVal) * 100}%` }} />
+                                  </div>
+                                  <div className="rubric-bar-col rubric-bar-col-good">
+                                    <div className="rubric-bar-good" style={{ width: `${(r.good / maxVal) * 100}%` }} />
+                                    <span className="rubric-bar-value good">{r.good || ''}</span>
+                                  </div>
+                                </div>
                               </div>
                             ))}
                           </div>

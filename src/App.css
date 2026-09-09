@@ -569,6 +569,31 @@
   fill: #38bdf8;
   stroke: #1e2f52;
   stroke-width: 1.5;
+  transition: r 0.15s;
+}
+
+.chart-crosshair {
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.chart-dot-highlight {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+.chart-tooltip-bg {
+  fill: #0e1830;
+  stroke: rgba(56, 189, 248, 0.6);
+  stroke-width: 1;
+}
+
+.chart-tooltip-text {
+  fill: #fff;
+  font-size: 11px;
+  font-family: 'Dosis', sans-serif;
 }
 
 .section-result {
@@ -1399,6 +1424,92 @@
   color: #9fb8dd;
   font-size: 13px;
 }
+
+.rubric-legend {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 10px;
+  color: #9fb8dd;
+  font-size: 12.5px;
+}
+
+.rubric-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.rubric-legend-swatch.good { background: #38bdf8; }
+.rubric-legend-swatch.bad { background: #f87171; }
+
+.rubric-rank-row-viz {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  padding: 8px 14px;
+}
+
+.rubric-bar-track {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  height: 18px;
+  position: relative;
+}
+
+.rubric-bar-track::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.rubric-bar-col {
+  display: flex;
+  align-items: center;
+  height: 10px;
+  gap: 6px;
+}
+
+.rubric-bar-col-bad {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+}
+
+.rubric-bar-col-good {
+  justify-content: flex-start;
+}
+
+.rubric-bar-bad {
+  height: 10px;
+  background: #f87171;
+  border-radius: 4px 0 0 4px;
+  min-width: 2px;
+}
+
+.rubric-bar-good {
+  height: 10px;
+  background: #38bdf8;
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+
+.rubric-bar-value {
+  font-size: 11px;
+  min-width: 12px;
+}
+
+.rubric-bar-value.good { color: #38bdf8; }
+.rubric-bar-value.bad { color: #f87171; }
 
 .content-thumb {
   width: 56px;
