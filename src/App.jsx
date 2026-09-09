@@ -106,6 +106,7 @@ function App() {
   const [financeAccounts, setFinanceAccounts] = useState([]);
   const [ads, setAds] = useState([]);
   const [musicTracks, setMusicTracks] = useState([]);
+  const [musicOrders, setMusicOrders] = useState([]);
   const [selectedTrack, setSelectedTrack] = useState(null);
   const [lyricsTheme, setLyricsTheme] = useState('');
   const [musicBusy, setMusicBusy] = useState(null);
@@ -573,6 +574,27 @@ function App() {
   async function loadMusicTracks() {
     const { data } = await supabase.from('music_tracks').select('*').order('created_at', { ascending: false });
     setMusicTracks(data || []);
+    const { data: orders } = await supabase.from('music_orders').select('*').eq('status', 'new').order('created_at', { ascending: true });
+    setMusicOrders(orders || []);
+  }
+
+  async function createTrackFromOrder(order) {
+    const musicProject = projects.find(p => p.name === 'МузыкAI');
+    const { data: track } = await supabase.from('music_tracks').insert({
+      title: order.description.slice(0, 60),
+      lyrics_theme: order.description,
+      project_id: musicProject?.id || null
+    }).select('*').single();
+    if (!track) return;
+    await supabase.from('music_orders').update({ status: 'in_progress', music_track_id: track.id }).eq('id', order.id);
+    await loadMusicTracks();
+    setSelectedTrack(track);
+  }
+
+  async function declineOrder(orderId) {
+    if (!confirm('Отклонить заявку?')) return;
+    await supabase.from('music_orders').update({ status: 'declined' }).eq('id', orderId);
+    loadMusicTracks();
   }
 
   async function createMusicTrack() {
@@ -1203,6 +1225,28 @@ function App() {
               <div style={{ maxWidth: 700, margin: '0 auto 24px', textAlign: 'center' }}>
                 <button className="section-btn" onClick={createMusicTrack}>➕ Новый трек</button>
               </div>
+
+              {musicOrders.length > 0 && (
+                <div style={{ maxWidth: 700, margin: '0 auto 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <h3 style={{ color: '#fff', fontWeight: 400 }}>📥 Новые заявки на трек ({musicOrders.length})</h3>
+                  {musicOrders.map((o) => (
+                    <div key={o.id} className="content-item" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+                      <div className="content-body">
+                        <span className="content-text">{o.description}</span>
+                        <span className="content-text">
+                          {o.telegram_username ? `@${o.telegram_username}` : `id ${o.telegram_user_id}`}
+                          {o.contact ? ` · ${o.contact}` : ''} · {new Date(o.created_at).toLocaleString('ru-RU')}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                        <button className="section-btn" onClick={() => createTrackFromOrder(o)}>🎵 Создать трек из заявки</button>
+                        <button className="content-action-btn delete" onClick={() => declineOrder(o.id)}>🗑️ Отклонить</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div style={{ maxWidth: 700, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {musicTracks.length === 0 && <p className="empty">Пока нет треков</p>}
                 {musicTracks.map((t) => (

@@ -77,9 +77,64 @@ function mainReplyKeyboard() {
 }
 
 bot.start((ctx) => {
-  if (!isOwner(ctx)) return ctx.reply('Этот бот приватный.');
+  if (!isOwner(ctx)) return sendPublicWelcome(ctx);
   ctx.reply('🚀 Привет! Я PONA DIGITAL — твой личный кабинет и AI-агент.\n\nВнизу — постоянное меню на кнопках. Можно также написать вопрос текстом или прислать голосовое сообщение — отвечу и могу выполнить действие (с подтверждением).', mainReplyKeyboard());
 });
+
+// ===== Приём заявок на трек от подписчиков МузыкAI (публичная часть бота, без доступа к CRM) =====
+
+const orderFlow = new Map(); // chat_id -> { step: 'description' | 'contact', description }
+
+function sendPublicWelcome(ctx) {
+  return ctx.reply(
+    '🎵 Привет! Здесь можно заказать персональный AI-трек — джингл, промо-ролик, подарок под ваш повод.',
+    { reply_markup: { inline_keyboard: [[{ text: '🎵 Заказать трек', callback_data: 'order_track:start' }]] } }
+  );
+}
+
+bot.action('order_track:start', async (ctx) => {
+  await ctx.answerCbQuery();
+  orderFlow.set(ctx.chat.id, { step: 'description' });
+  await ctx.reply('Опишите, какой трек хотите: тема, повод, настроение, стиль музыки. Чем подробнее — тем точнее получится.');
+});
+
+async function handlePublicText(ctx, textOverride) {
+  const text = textOverride ?? ctx.message.text;
+  if (text.startsWith('/')) return sendPublicWelcome(ctx);
+
+  const state = orderFlow.get(ctx.chat.id);
+  if (!state) return sendPublicWelcome(ctx);
+
+  if (state.step === 'description') {
+    state.description = text;
+    state.step = 'contact';
+    orderFlow.set(ctx.chat.id, state);
+    return ctx.reply('Оставьте контакт для связи (телефон или username), либо напишите «пропустить».');
+  }
+
+  if (state.step === 'contact') {
+    const contact = /^пропустить$/i.test(text.trim()) ? null : text.trim();
+    orderFlow.delete(ctx.chat.id);
+    const { error } = await supabase.from('music_orders').insert({
+      telegram_user_id: ctx.chat.id,
+      telegram_username: ctx.chat.username || null,
+      description: state.description,
+      contact
+    });
+    if (error) {
+      console.log(`⚠️ Не удалось сохранить заявку на трек: ${error.message}`);
+      return ctx.reply('Не получилось сохранить заявку, попробуйте ещё раз чуть позже.');
+    }
+    await ctx.reply('✅ Заявка принята! Мы посмотрим и свяжемся с вами.');
+    if (OWNER_CHAT_ID) {
+      const who = ctx.chat.username ? `@${ctx.chat.username}` : `id ${ctx.chat.id}`;
+      await bot.telegram.sendMessage(
+        OWNER_CHAT_ID,
+        `🎵 Новая заявка на трек от ${who}:\n\n${state.description}${contact ? `\n\nКонтакт: ${contact}` : ''}`
+      );
+    }
+  }
+}
 
 bot.command('menu', (ctx) => {
   if (!isOwner(ctx)) return;
@@ -483,7 +538,17 @@ async function transcribeVoice(fileUrl) {
 }
 
 bot.on('voice', async (ctx) => {
-  if (!isOwner(ctx)) return;
+  if (!isOwner(ctx)) {
+    if (!orderFlow.has(ctx.chat.id)) return;
+    try {
+      const fileLink = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
+      const text = await transcribeVoice(fileLink.href);
+      await handlePublicText(ctx, text);
+    } catch (err) {
+      await ctx.reply('Не удалось распознать голос, напишите текстом, пожалуйста.');
+    }
+    return;
+  }
   try {
     await ctx.sendChatAction('typing');
     const fileLink = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
@@ -496,7 +561,7 @@ bot.on('voice', async (ctx) => {
 });
 
 bot.on('text', async (ctx) => {
-  if (!isOwner(ctx)) return;
+  if (!isOwner(ctx)) return handlePublicText(ctx);
   const text = ctx.message.text;
   if (text.startsWith('/')) return;
 
