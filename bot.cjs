@@ -587,7 +587,7 @@ async function notifyNewDrafts() {
         if (!claimed || claimed.length === 0) continue;
 
         let mediaUrl = item.media_url;
-        if (!mediaUrl && item.image_prompt) {
+        if (!mediaUrl && item.image_prompt && item.media_type !== 'audio') {
           try {
             mediaUrl = await generateAndUploadImage(item.id, item.image_prompt);
             imagesGenerated++;
@@ -603,7 +603,9 @@ async function notifyNewDrafts() {
           { text: '✅ Утвердить', callback_data: `approve:${item.id}` },
           { text: '❌ Отклонить', callback_data: `reject:${item.id}` }
         ]] };
-        if (mediaUrl) {
+        if (mediaUrl && item.media_type === 'audio') {
+          await bot.telegram.sendAudio(OWNER_CHAT_ID, mediaUrl, { caption, reply_markup: keyboard });
+        } else if (mediaUrl) {
           await bot.telegram.sendPhoto(OWNER_CHAT_ID, mediaUrl, { caption, reply_markup: keyboard });
         } else {
           await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { reply_markup: keyboard });
@@ -820,7 +822,10 @@ async function publishScheduledContent() {
       if (!claimed || claimed.length === 0) continue;
 
       const text = item.title ? `${item.title}\n\n${item.body}` : item.body;
-      if (item.media_url) {
+      if (item.media_url && item.media_type === 'audio') {
+        const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
+        await bot.telegram.sendAudio(channelId, item.media_url, { caption, title: item.title || undefined });
+      } else if (item.media_url) {
         const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
         await bot.telegram.sendPhoto(channelId, item.media_url, { caption });
       } else {

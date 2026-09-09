@@ -531,9 +531,42 @@ function App() {
   async function createMusicTrack() {
     const title = prompt('Название трека:');
     if (!title) return;
-    const { data } = await supabase.from('music_tracks').insert({ title: title.trim() }).select('*').single();
+    const musicProject = projects.find(p => p.name === 'МузыкAI');
+    const { data } = await supabase.from('music_tracks').insert({ title: title.trim(), project_id: musicProject?.id || null }).select('*').single();
     await loadMusicTracks();
     if (data) setSelectedTrack(data);
+  }
+
+  async function scheduleTrackPublish(track) {
+    if (!track.project_id) {
+      alert('У трека не задан проект — не могу поставить в очередь на публикацию.');
+      return;
+    }
+    const dateStr = prompt('Дата и время публикации (ГГГГ-ММ-ДД ЧЧ:ММ), по местному времени:', '');
+    if (!dateStr) return;
+    const when = new Date(dateStr.replace(' ', 'T'));
+    if (isNaN(when.getTime())) {
+      alert('Не удалось распознать дату/время');
+      return;
+    }
+    const { data: item, error } = await supabase.from('content_items').insert({
+      project_id: track.project_id,
+      platform: 'telegram',
+      title: track.title,
+      body: `${track.title}\n\n${track.suno_prompt || ''}`.trim(),
+      media_url: track.audio_url,
+      media_type: 'audio',
+      status: 'draft',
+      scheduled_at: when.toISOString()
+    }).select('*').single();
+    if (error) {
+      alert('Ошибка: ' + error.message);
+      return;
+    }
+    await supabase.from('music_tracks').update({ content_item_id: item.id }).eq('id', track.id);
+    alert('Трек поставлен в очередь на утверждение — придёт в бота на подтверждение перед публикацией.');
+    await loadMusicTracks();
+    setSelectedTrack(prev => prev && { ...prev, content_item_id: item.id });
   }
 
   async function deleteMusicTrack(id) {
@@ -1186,6 +1219,13 @@ function App() {
                 <p className="content-text">Сгенерируйте трек в Suno вручную (промпт + текст выше), скачайте mp3 и загрузите сюда как готовый продукт.</p>
                 {selectedTrack.audio_url && <audio controls src={selectedTrack.audio_url} style={{ width: '100%', marginTop: 8 }} />}
                 <input type="file" accept="audio/*" onChange={(e) => handleFinalUpload(e, selectedTrack)} style={{ marginTop: 8 }} />
+                {selectedTrack.audio_url && (
+                  selectedTrack.content_item_id ? (
+                    <p className="content-text" style={{ marginTop: 8 }}>📤 Уже поставлен в очередь на публикацию/утверждение.</p>
+                  ) : (
+                    <button className="section-btn" style={{ marginTop: 8 }} onClick={() => scheduleTrackPublish(selectedTrack)}>📤 Запланировать публикацию в канал</button>
+                  )
+                )}
               </div>
             </div>
           )}
@@ -1447,7 +1487,11 @@ function App() {
                         return (
                           <div key={item.id} className="content-item">
                             <span className="content-platform">{platform.icon} {platform.label}{!platform.live && <span className="content-platform-badge">черновик до API</span>}</span>
-                            {item.media_url && <img className="content-thumb" src={item.media_url} alt="" onClick={() => setPreviewItem(item)} style={{ cursor: 'pointer' }} />}
+                            {item.media_url && item.media_type === 'audio' ? (
+                              <audio controls src={item.media_url} style={{ height: 32 }} />
+                            ) : item.media_url && (
+                              <img className="content-thumb" src={item.media_url} alt="" onClick={() => setPreviewItem(item)} style={{ cursor: 'pointer' }} />
+                            )}
                             <div className="content-body">
                               <span className="content-title">{item.title}</span>
                               <span className="content-text">{item.body}</span>
@@ -1737,7 +1781,9 @@ function App() {
                   <div className="tg-preview-sub">канал</div>
                 </div>
               </div>
-              {previewItem.media_url ? (
+              {previewItem.media_url && previewItem.media_type === 'audio' ? (
+                <audio controls src={previewItem.media_url} style={{ width: '100%' }} />
+              ) : previewItem.media_url ? (
                 <img className="tg-preview-image" src={previewItem.media_url} alt="" />
               ) : (
                 <div className="tg-preview-image tg-preview-no-image">Картинка ещё не сгенерирована</div>
