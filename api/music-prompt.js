@@ -25,8 +25,9 @@ export default async function handler(req, res) {
 
 Анализ референс-трека: ${JSON.stringify(track.analysis || {})}
 Тема песни: ${track.lyrics_theme || 'не указана'}
+Текст песни (для контекста жанра/настроения, сам текст в промпт не включать): ${(track.lyrics || '').slice(0, 1500)}
 
-Верни ТОЛЬКО сам промпт для поля "Style of Music" в Suno — короткую строку через запятую с жанром, настроением, темпом, вокалом, инструментами и стилистическими тегами. Без пояснений, без markdown, только сам промпт.`;
+Верни ТОЛЬКО сам промпт для поля "Style of Music" в Suno — короткую строку тегов через запятую на английском языке (жанр, настроение, темп/BPM, тип вокала, инструменты, стилистические теги). Suno лучше распознаёт стилевые теги на английском, даже если сам текст песни на русском. Без пояснений, без markdown, только сам промпт, только на английском.`;
 
     const r = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -35,7 +36,7 @@ export default async function handler(req, res) {
         model: 'anthropic/claude-opus-5',
         max_tokens: 512,
         messages: [
-          { role: 'system', content: 'Ты — эксперт по промптам для Suno AI. Отвечаешь только готовой строкой промпта, без пояснений.' },
+          { role: 'system', content: 'You are a Suno AI prompt expert. Always respond with ONLY the finished style-tag prompt string in English, comma-separated, no explanations, no markdown — regardless of what language the input data or lyrics are in.' },
           { role: 'user', content: prompt }
         ]
       })
