@@ -154,14 +154,22 @@
   justify-content: center;
 }
 
-/* Зеркальный/стеклянный эффект кнопок: глянцевая дуга сверху + мягкое свечение по нижним углам,
-   поверх собственного фона кнопки — общий для nav-btn/section-btn/logout-btn. */
-.nav-btn, .section-btn, .logout-btn {
+/* Зеркальный/стеклянный эффект кнопок и блоков: глянцевая дуга сверху + мягкое свечение по низу,
+   поверх собственного фона элемента — общий для всех кнопок и карточек-блоков во всех разделах. */
+.nav-btn, .section-btn, .logout-btn,
+.auth-btn, .add-btn, .rename-btn, .delete-btn, .project-tab-btn, .cancel-btn,
+.chat-send-btn, .finance-btn, .income-btn, .expense-btn, .content-action-btn,
+.auth-card, .project-item, .stat-mini-card, .stat-card, .ai-dashboard-block,
+.tg-preview-card, .project-analytics-card, .finance-card, .finance-item, .content-item {
   position: relative;
   overflow: hidden;
 }
 
-.nav-btn::before, .section-btn::before, .logout-btn::before {
+.nav-btn::before, .section-btn::before, .logout-btn::before,
+.auth-btn::before, .add-btn::before, .rename-btn::before, .delete-btn::before, .project-tab-btn::before, .cancel-btn::before,
+.chat-send-btn::before, .finance-btn::before, .income-btn::before, .expense-btn::before, .content-action-btn::before,
+.auth-card::before, .project-item::before, .stat-mini-card::before, .stat-card::before, .ai-dashboard-block::before,
+.tg-preview-card::before, .project-analytics-card::before, .finance-card::before, .finance-item::before, .content-item::before {
   content: '';
   position: absolute;
   top: -18%;
@@ -173,7 +181,11 @@
   pointer-events: none;
 }
 
-.nav-btn::after, .section-btn::after, .logout-btn::after {
+.nav-btn::after, .section-btn::after, .logout-btn::after,
+.auth-btn::after, .add-btn::after, .rename-btn::after, .delete-btn::after, .project-tab-btn::after, .cancel-btn::after,
+.chat-send-btn::after, .finance-btn::after, .income-btn::after, .expense-btn::after, .content-action-btn::after,
+.auth-card::after, .project-item::after, .stat-mini-card::after, .stat-card::after, .ai-dashboard-block::after,
+.tg-preview-card::after, .project-analytics-card::after, .finance-card::after, .finance-item::after, .content-item::after {
   content: '';
   position: absolute;
   bottom: -8px;
