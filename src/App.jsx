@@ -926,7 +926,11 @@ function App() {
       <header className="header">
         <div className="header-brand">
           <span className="brand-title">PONA DIGITAL</span>
-          <img src="/logo.jpg" alt="" className="brand-logo" />
+          <div className="brand-logo-row">
+            <span className="pulse-line pulse-left"></span>
+            <img src="/logo.jpg" alt="" className="brand-logo" />
+            <span className="pulse-line pulse-right"></span>
+          </div>
         </div>
         <div className="header-nav-row">
           <nav className="nav">
