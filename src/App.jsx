@@ -924,7 +924,10 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <div className="logo">PONA DIGITAL</div>
+        <div className="logo-badge">
+          <img src="/logo.jpg" alt="" className="logo-icon" />
+          <span className="logo-text">PONA DIGITAL</span>
+        </div>
         <nav className="nav">
           <button className={`nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
             <span className="nav-emoji">📊</span> Dashboard
