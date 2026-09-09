@@ -8,6 +8,8 @@ const ffmpeg = require('fluent-ffmpeg');
 ffmpeg.setFfmpegPath(require('@ffmpeg-installer/ffmpeg').path);
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+// Легаси-дефолт для инструментов агента (напр. get_tgstat_stats), где канал явно не указан.
+// Публикация/статистика по проектам теперь берут канал из projects.telegram_channel_id, не отсюда.
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
 const supabaseUrl = process.env.VITE_SUPABASE_URL;
 // service_role, не anon — content_items разрешён на запись/чтение только authenticated-сессиям,
@@ -19,8 +21,6 @@ const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const MODEL = 'anthropic/claude-opus-5';
 const IMAGE_MODEL = 'krea/krea-2-medium-turbo';
 const MEDIA_BUCKET = 'content-media';
-// Проект, к которому относится CHANNEL_ID — статистика подписчиков привязывается к нему.
-const STATS_PROJECT_ID = process.env.TELEGRAM_PROJECT_ID;
 const TGSTAT_TOKEN = process.env.TGSTAT_API_TOKEN;
 
 const TRANSCRIBE_MODEL = 'openai/gpt-transcribe';
@@ -728,45 +728,57 @@ async function checkReminders() {
   }
 }
 
+// Каждый проект может вести свой Telegram-канал — храним numeric chat_id (не @username: chat_member
+// апдейты приходят только с numeric id, а numeric id одинаково работает и для sendMessage/getChatMembersCount).
+async function getChannelProjects() {
+  const { data } = await supabase.from('projects').select('id, telegram_channel_id').not('telegram_channel_id', 'is', null);
+  return data || [];
+}
+
 async function captureSubscriberSnapshot() {
-  if (!CHANNEL_ID || !STATS_PROJECT_ID) return;
-  try {
-    const count = await bot.telegram.getChatMembersCount(CHANNEL_ID);
+  const channelProjects = await getChannelProjects();
+  for (const proj of channelProjects) {
+    try {
+      const count = await bot.telegram.getChatMembersCount(proj.telegram_channel_id);
 
-    const { data: prev } = await supabase
-      .from('channel_stats_snapshots')
-      .select('subscriber_count')
-      .eq('project_id', STATS_PROJECT_ID)
-      .order('captured_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      const { data: prev } = await supabase
+        .from('channel_stats_snapshots')
+        .select('subscriber_count')
+        .eq('project_id', proj.id)
+        .order('captured_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    await supabase.from('channel_stats_snapshots').insert({ project_id: STATS_PROJECT_ID, subscriber_count: count });
+      await supabase.from('channel_stats_snapshots').insert({ project_id: proj.id, subscriber_count: count });
 
-    if (prev && OWNER_CHAT_ID) {
-      const drop = prev.subscriber_count - count;
-      const threshold = Math.max(2, Math.round(prev.subscriber_count * 0.05));
-      if (drop >= threshold) {
-        await bot.telegram.sendMessage(OWNER_CHAT_ID, `📉 Резкое падение подписчиков: было ${prev.subscriber_count}, стало ${count} (−${drop}).`);
+      if (prev && OWNER_CHAT_ID) {
+        const drop = prev.subscriber_count - count;
+        const threshold = Math.max(2, Math.round(prev.subscriber_count * 0.05));
+        if (drop >= threshold) {
+          await bot.telegram.sendMessage(OWNER_CHAT_ID, `📉 Резкое падение подписчиков (канал ${proj.telegram_channel_id}): было ${prev.subscriber_count}, стало ${count} (−${drop}).`);
+        }
       }
+    } catch (err) {
+      console.log(`⚠️ Не удалось снять снимок подписчиков для канала ${proj.telegram_channel_id}: ${err.message}`);
     }
-  } catch (err) {
-    console.log(`⚠️ Не удалось снять снимок подписчиков: ${err.message}`);
   }
 }
 
 const MEMBER_STATUSES = ['member', 'administrator', 'creator', 'restricted'];
 
 bot.on('chat_member', async (ctx) => {
-  if (!STATS_PROJECT_ID) return;
   const update = ctx.update.chat_member;
+  const channelProjects = await getChannelProjects();
+  const project = channelProjects.find(p => p.telegram_channel_id === String(ctx.chat.id));
+  if (!project) return;
+
   const wasMember = MEMBER_STATUSES.includes(update.old_chat_member.status);
   const isMember = MEMBER_STATUSES.includes(update.new_chat_member.status);
   if (wasMember === isMember) return;
 
   const eventType = isMember ? 'joined' : 'left';
   await supabase.from('channel_member_events').insert({
-    project_id: STATS_PROJECT_ID,
+    project_id: project.id,
     telegram_user_id: update.new_chat_member.user.id,
     event_type: eventType,
     occurred_at: new Date(update.date * 1000).toISOString()
@@ -776,12 +788,12 @@ bot.on('chat_member', async (ctx) => {
 let publishInProgress = false;
 
 async function publishScheduledContent() {
-  if (!CHANNEL_ID || publishInProgress) return;
+  if (publishInProgress) return;
   publishInProgress = true;
   try {
   const { data: items, error } = await supabase
     .from('content_items')
-    .select('*')
+    .select('*, projects(telegram_channel_id)')
     .eq('platform', 'telegram')
     .eq('status', 'scheduled')
     .lte('scheduled_at', new Date().toISOString())
@@ -791,6 +803,12 @@ async function publishScheduledContent() {
 
   for (const item of items) {
     try {
+      const channelId = item.projects?.telegram_channel_id;
+      if (!channelId) {
+        await supabase.from('content_items').update({ status: 'failed', error: 'У проекта не задан telegram_channel_id' }).eq('id', item.id);
+        continue;
+      }
+
       // Атомарно "забираем" пост (scheduled -> publishing) — если строку уже забрал
       // другой запуск (перекрытие интервалов), claimed.length будет 0 и мы её пропустим.
       const { data: claimed } = await supabase
@@ -804,12 +822,12 @@ async function publishScheduledContent() {
       const text = item.title ? `${item.title}\n\n${item.body}` : item.body;
       if (item.media_url) {
         const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
-        await bot.telegram.sendPhoto(CHANNEL_ID, item.media_url, { caption });
+        await bot.telegram.sendPhoto(channelId, item.media_url, { caption });
       } else {
-        await bot.telegram.sendMessage(CHANNEL_ID, text);
+        await bot.telegram.sendMessage(channelId, text);
       }
       await supabase.from('content_items').update({ status: 'published', published_at: new Date().toISOString(), error: null }).eq('id', item.id);
-      console.log(`✅ Опубликован пост "${item.title || item.id}" в Telegram`);
+      console.log(`✅ Опубликован пост "${item.title || item.id}" в Telegram (канал ${channelId})`);
     } catch (err) {
       await supabase.from('content_items').update({ status: 'failed', error: err.message }).eq('id', item.id);
       console.log(`❌ Ошибка публикации поста "${item.title || item.id}": ${err.message}`);
@@ -833,21 +851,13 @@ function startBot() {
 startBot();
 console.log('🤖 Бот PONA DIGITAL + Claude запущен!');
 
-if (CHANNEL_ID && STATS_PROJECT_ID) {
-  setInterval(captureSubscriberSnapshot, 60 * 60 * 1000);
-  captureSubscriberSnapshot();
-  console.log('📈 Снимки числа подписчиков включены (раз в час) + учёт вступлений/выходов');
-} else if (CHANNEL_ID) {
-  console.log('⚠️ TELEGRAM_PROJECT_ID не задан — статистика подписчиков отключена');
-}
+setInterval(captureSubscriberSnapshot, 60 * 60 * 1000);
+captureSubscriberSnapshot();
+console.log('📈 Снимки числа подписчиков включены (раз в час, по всем проектам с telegram_channel_id) + учёт вступлений/выходов');
 
-if (CHANNEL_ID) {
-  setInterval(publishScheduledContent, 60 * 1000);
-  publishScheduledContent();
-  console.log('📤 Планировщик контент-завода запущен (проверка очереди раз в минуту)');
-} else {
-  console.log('⚠️ TELEGRAM_CHANNEL_ID не задан — автопубликация в Telegram отключена');
-}
+setInterval(publishScheduledContent, 60 * 1000);
+publishScheduledContent();
+console.log('📤 Планировщик контент-завода запущен (проверка очереди раз в минуту, публикует в канал своего проекта)');
 
 if (OWNER_CHAT_ID) {
   setInterval(notifyNewDrafts, 60 * 1000);

@@ -383,6 +383,26 @@ function App() {
     loadAllData();
   }
 
+  async function linkTelegramChannel() {
+    if (!selectedProject) return;
+    const channel = prompt('Username канала (например @МузыкAI) или его numeric ID. Бот должен быть добавлен туда админом с правом постить:', selectedProject.telegram_channel_id || '');
+    if (!channel) return;
+    try {
+      const res = await fetch('/api/link-telegram-channel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: selectedProject.id, channel: channel.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка');
+      alert(`Привязан канал: ${data.title}${data.username ? ' (@' + data.username + ')' : ''}`);
+      await loadAllData();
+      setSelectedProject(prev => prev && { ...prev, telegram_channel_id: String(data.id) });
+    } catch (err) {
+      alert('Не удалось привязать канал: ' + err.message);
+    }
+  }
+
   async function deleteProject(id) {
     if (!confirm('Удалить проект?')) return;
     await supabase.from('projects').delete().eq('id', id);
@@ -1257,6 +1277,9 @@ function App() {
                 <div className="project-header">
                   <h1>{selectedProject.name}</h1>
                   <button onClick={renameProject} className="rename-btn">✏️</button>
+                  <button onClick={linkTelegramChannel} className="rename-btn" title={selectedProject.telegram_channel_id ? `Канал привязан: ${selectedProject.telegram_channel_id}` : 'Канал не привязан'}>
+                    {selectedProject.telegram_channel_id ? '🔗' : '⛓️‍💥'}
+                  </button>
                   <button onClick={() => deleteProject(selectedProject.id)} className="delete-btn">🗑️</button>
                 </div>
                 {selectedProject.description && <p className="project-desc">{selectedProject.description}</p>}
