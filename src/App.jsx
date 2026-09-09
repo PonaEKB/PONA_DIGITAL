@@ -924,31 +924,33 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <div className="logo-badge">
-          <img src="/logo.jpg" alt="" className="logo-icon" />
-          <span className="logo-text">PONA DIGITAL</span>
+        <div className="header-brand">
+          <span className="brand-title">PONA DIGITAL</span>
+          <img src="/logo.jpg" alt="" className="brand-logo" />
         </div>
-        <nav className="nav">
-          <button className={`nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
-            <span className="nav-emoji">📊</span> Dashboard
-          </button>
-          <button className={`nav-btn ${activeTab === 'projects' ? 'active' : ''}`} onClick={() => setActiveTab('projects')}>
-            <span className="nav-emoji">📁</span> Проекты
-          </button>
-          <button className={`nav-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
-            <span className="nav-emoji">📈</span> Аналитика
-          </button>
-          <button className={`nav-btn ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => { setActiveTab('finance'); loadFinanceAccounts(); }}>
-            <span className="nav-emoji">💰</span> Финансы
-          </button>
-          <button className={`nav-btn ${activeTab === 'ads' ? 'active' : ''}`} onClick={() => { setActiveTab('ads'); loadAds(); }}>
-            <span className="nav-emoji">📋</span> Доски объявлений
-          </button>
-          <button className={`nav-btn ${activeTab === 'music' ? 'active' : ''}`} onClick={() => { setActiveTab('music'); setSelectedTrack(null); loadMusicTracks(); }}>
-            <span className="nav-emoji">🎵</span> Музыка
-          </button>
-        </nav>
-        <button onClick={handleLogout} className="logout-btn"><span className="nav-emoji">🚪</span> Выйти</button>
+        <div className="header-nav-row">
+          <nav className="nav">
+            <button className={`nav-btn ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+              <span className="nav-emoji">📊</span> Dashboard
+            </button>
+            <button className={`nav-btn ${activeTab === 'projects' ? 'active' : ''}`} onClick={() => setActiveTab('projects')}>
+              <span className="nav-emoji">📁</span> Проекты
+            </button>
+            <button className={`nav-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => setActiveTab('analytics')}>
+              <span className="nav-emoji">📈</span> Аналитика
+            </button>
+            <button className={`nav-btn ${activeTab === 'finance' ? 'active' : ''}`} onClick={() => { setActiveTab('finance'); loadFinanceAccounts(); }}>
+              <span className="nav-emoji">💰</span> Финансы
+            </button>
+            <button className={`nav-btn ${activeTab === 'ads' ? 'active' : ''}`} onClick={() => { setActiveTab('ads'); loadAds(); }}>
+              <span className="nav-emoji">📋</span> Доски объявлений
+            </button>
+            <button className={`nav-btn ${activeTab === 'music' ? 'active' : ''}`} onClick={() => { setActiveTab('music'); setSelectedTrack(null); loadMusicTracks(); }}>
+              <span className="nav-emoji">🎵</span> Музыка
+            </button>
+          </nav>
+          <button onClick={handleLogout} className="logout-btn"><span className="nav-emoji">🚪</span> Выйти</button>
+        </div>
       </header>
 
       {activeTab === 'dashboard' ? (
