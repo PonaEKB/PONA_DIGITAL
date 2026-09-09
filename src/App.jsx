@@ -597,6 +597,20 @@ function App() {
     loadMusicTracks();
   }
 
+  async function renameMusicTrack(track) {
+    const title = prompt('Новое название трека:', track.title);
+    if (!title || title === track.title) return;
+    await supabase.from('music_tracks').update({ title }).eq('id', track.id);
+    await loadMusicTracks();
+    setSelectedTrack(prev => prev && { ...prev, title });
+  }
+
+  async function saveMusicTrackField(track, field) {
+    await supabase.from('music_tracks').update({ [field]: track[field] }).eq('id', track.id);
+    await loadMusicTracks();
+    alert('Сохранено');
+  }
+
   async function createMusicTrack() {
     const title = prompt('Название трека:');
     if (!title) return;
@@ -1269,7 +1283,11 @@ function App() {
           ) : (
             <div style={{ maxWidth: 700, margin: '0 auto' }}>
               <button className="section-btn" onClick={() => setSelectedTrack(null)} style={{ marginBottom: 16 }}>← Ко всем трекам</button>
-              <h2 style={{ color: '#fff', fontWeight: 400 }}>🎵 {selectedTrack.title}</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <h2 style={{ color: '#fff', fontWeight: 400, margin: 0 }}>🎵 {selectedTrack.title}</h2>
+                <button onClick={() => renameMusicTrack(selectedTrack)} className="rename-btn">✏️</button>
+                <button onClick={() => deleteMusicTrack(selectedTrack.id)} className="delete-btn">🗑️</button>
+              </div>
 
               <div className="content-item" style={{ flexDirection: 'column', alignItems: 'stretch', marginTop: 16 }}>
                 <span className="content-title">1. Референс-трек</span>
@@ -1298,7 +1316,18 @@ function App() {
                 <button className="section-btn" style={{ marginTop: 8 }} disabled={musicBusy === selectedTrack.id || !lyricsTheme.trim()} onClick={() => runMusicStep('/api/music-lyrics', { track_id: selectedTrack.id, theme: lyricsTheme }, selectedTrack.id)}>
                   {musicBusy === selectedTrack.id ? '⏳ Пишу текст...' : '✍️ Сгенерировать текст'}
                 </button>
-                {selectedTrack.lyrics && <pre className="content-text" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{selectedTrack.lyrics}</pre>}
+                {selectedTrack.lyrics && (
+                  <>
+                    <textarea
+                      className="idea-input"
+                      style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}
+                      rows={12}
+                      value={selectedTrack.lyrics}
+                      onChange={e => setSelectedTrack({ ...selectedTrack, lyrics: e.target.value })}
+                    />
+                    <button className="section-btn" style={{ marginTop: 8 }} onClick={() => saveMusicTrackField(selectedTrack, 'lyrics')}>💾 Сохранить исправления</button>
+                  </>
+                )}
               </div>
 
               <div className="content-item" style={{ flexDirection: 'column', alignItems: 'stretch', marginTop: 16 }}>
@@ -1308,8 +1337,17 @@ function App() {
                 </button>
                 {selectedTrack.suno_prompt && (
                   <>
-                    <p className="content-text" style={{ marginTop: 8 }}>{selectedTrack.suno_prompt}</p>
-                    <button className="section-btn" onClick={() => copySunoPrompt(selectedTrack)}>📋 Скопировать промпт + текст для Suno</button>
+                    <textarea
+                      className="idea-input"
+                      style={{ marginTop: 8 }}
+                      rows={3}
+                      value={selectedTrack.suno_prompt}
+                      onChange={e => setSelectedTrack({ ...selectedTrack, suno_prompt: e.target.value })}
+                    />
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                      <button className="section-btn" onClick={() => saveMusicTrackField(selectedTrack, 'suno_prompt')}>💾 Сохранить исправления</button>
+                      <button className="section-btn" onClick={() => copySunoPrompt(selectedTrack)}>📋 Скопировать промпт + текст для Suno</button>
+                    </div>
                   </>
                 )}
               </div>
