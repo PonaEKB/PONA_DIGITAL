@@ -592,6 +592,7 @@
 .dashboard {
   padding: 28px;
   flex: 1;
+  background: linear-gradient(0deg, #04060c 0%, #1e2f52 75%);
 }
 
 .dashboard-title {
