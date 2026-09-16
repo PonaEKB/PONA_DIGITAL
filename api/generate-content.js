@@ -53,7 +53,7 @@ async function generatePostsText({ projectId, projectName, context, days, postsP
   const rubricGuidance = await getRubricGuidance(projectId);
   const data = await callRouter('/chat/completions', {
     model: TEXT_MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [
       { role: 'system', content: 'Ты — контент-стратег Telegram-канала. Отвечай СТРОГО валидным JSON-массивом, без markdown-разметки и пояснений.' },
       { role: 'user', content: `Проект: "${projectName}".\n\n${context}${rubricGuidance}\n\nСгенерируй ${total} постов для Telegram-канала на ${days} дня вперёд, по ${postsPerDay} поста в день. Для каждого поста верни объект: {"day": номер дня от 1 до ${days}, "text": готовый текст поста (3-8 предложений), "image_prompt": подробный промпт на английском для генерации иллюстрации к посту, без текста и букв на изображении, в едином визуальном стиле}.\n\nТребования к "text": НЕ сплошной абзац — разбивай мысли на короткие абзацы пустой строкой между ними (2-4 строки на абзац), к месту используй эмодзи (не в каждом предложении, а как акценты у ключевых мыслей), при уместности заверши цепляющим вопросом или лёгкой интригой для вовлечения. Текст должен визуально хорошо смотреться в Telegram, а не выглядеть плотной стеной текста.\n\nВерни ТОЛЬКО JSON-массив из ${total} объектов, без обёртки и без markdown.` }
