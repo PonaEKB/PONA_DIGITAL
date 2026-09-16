@@ -42,7 +42,7 @@ async function getRubricGuidance(projectId) {
   return guidance;
 }
 
-async function generatePostsText({ projectId, projectName, context, days, postsPerDay }) {
+async function generatePostsText({ projectId, projectName, context, days, postsPerDay, dayOffset = 0 }) {
   const total = days * postsPerDay;
   const rubricGuidance = await getRubricGuidance(projectId);
   const data = await callRouter('/chat/completions', {
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { projectId, projectName, context, days = 3, postsPerDay = 4 } = req.body || {};
+  const { projectId, projectName, context, days = 3, postsPerDay = 4, dayOffset = 0 } = req.body || {};
   if (!projectId || !projectName) {
     res.status(400).json({ error: 'projectId and projectName are required' });
     return;
@@ -87,7 +87,7 @@ export default async function handler(req, res) {
     const now = new Date();
     const rows = [];
     for (const [dayStr, items] of Object.entries(grouped)) {
-      const day = parseInt(dayStr, 10);
+      const day = parseInt(dayStr, 10) + dayOffset;
       items.forEach((post, idx) => {
         const scheduledAt = new Date(now);
         scheduledAt.setUTCDate(scheduledAt.getUTCDate() + day);
