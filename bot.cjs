@@ -921,6 +921,103 @@ function startBot() {
 startBot();
 console.log('🤖 Бот PONA DIGITAL + Claude запущен!');
 
+// ===== Отдельный публичный бот «Твой Гороскоп»: гороскоп по знаку зодиака по запросу =====
+
+const HOROSCOPE_BOT_TOKEN = process.env.HOROSCOPE_BOT_TOKEN;
+
+if (HOROSCOPE_BOT_TOKEN) {
+  const horoscopeBot = new Telegraf(HOROSCOPE_BOT_TOKEN);
+
+  const ZODIAC_SIGNS = [
+    { key: 'aries', label: '♈ Овен' },
+    { key: 'taurus', label: '♉ Телец' },
+    { key: 'gemini', label: '♊ Близнецы' },
+    { key: 'cancer', label: '♋ Рак' },
+    { key: 'leo', label: '♌ Лев' },
+    { key: 'virgo', label: '♍ Дева' },
+    { key: 'libra', label: '♎ Весы' },
+    { key: 'scorpio', label: '♏ Скорпион' },
+    { key: 'sagittarius', label: '♐ Стрелец' },
+    { key: 'capricorn', label: '♑ Козерог' },
+    { key: 'aquarius', label: '♒ Водолей' },
+    { key: 'pisces', label: '♓ Рыбы' }
+  ];
+
+  function zodiacKeyboard() {
+    const rows = [];
+    for (let i = 0; i < ZODIAC_SIGNS.length; i += 3) {
+      rows.push(ZODIAC_SIGNS.slice(i, i + 3).map(s => ({ text: s.label, callback_data: `zodiac:${s.key}` })));
+    }
+    return { inline_keyboard: rows };
+  }
+
+  horoscopeBot.start((ctx) => {
+    ctx.reply('🔮 Привет! Выбери свой знак зодиака — пришлю гороскоп на сегодня.', { reply_markup: zodiacKeyboard() });
+  });
+
+  horoscopeBot.command('menu', (ctx) => {
+    ctx.reply('Выбери знак зодиака:', { reply_markup: zodiacKeyboard() });
+  });
+
+  horoscopeBot.action(/^zodiac:(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const sign = ZODIAC_SIGNS.find(s => s.key === ctx.match[1]);
+    if (!sign) return;
+
+    try {
+      const { data: project } = await supabase.from('projects').select('id').eq('name', 'Твой Гороскоп').maybeSingle();
+      if (!project) {
+        await ctx.reply('Гороскоп пока не подключён, загляните позже.');
+        return;
+      }
+
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      const todayEnd = new Date(todayStart);
+      todayEnd.setUTCDate(todayEnd.getUTCDate() + 1);
+
+      const { data: post } = await supabase
+        .from('content_items')
+        .select('body, scheduled_at')
+        .eq('project_id', project.id)
+        .gte('scheduled_at', todayStart.toISOString())
+        .lt('scheduled_at', todayEnd.toISOString())
+        .order('scheduled_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (!post) {
+        await ctx.reply('Гороскоп на сегодня ещё не готов, загляните чуть позже 🔮');
+        return;
+      }
+
+      const signEmoji = sign.label.split(' ')[0];
+      const line = post.body.split('\n').find(l => l.trim().startsWith(signEmoji));
+      const text = line ? line.trim() : post.body;
+
+      await ctx.reply(`${sign.label}\n\n${text}`, { reply_markup: zodiacKeyboard() });
+    } catch (err) {
+      console.log(`⚠️ Ошибка гороскоп-бота: ${err.message}`);
+      await ctx.reply('Не получилось получить гороскоп, попробуйте ещё раз чуть позже.');
+    }
+  });
+
+  horoscopeBot.catch((err, ctx) => {
+    console.error(`❌ Ошибка гороскоп-бота (${ctx.updateType}):`, err.message);
+  });
+
+  function startHoroscopeBot() {
+    horoscopeBot.launch({ allowedUpdates: ['message', 'callback_query'] }).catch(err => {
+      console.error('❌ Ошибка поллинга гороскоп-бота, повтор через 5с:', err.message);
+      setTimeout(startHoroscopeBot, 5000);
+    });
+  }
+  startHoroscopeBot();
+  console.log('🔮 Бот «Твой Гороскоп» запущен!');
+} else {
+  console.log('⚠️ HOROSCOPE_BOT_TOKEN не задан — бот «Твой Гороскоп» отключён');
+}
+
 setInterval(captureSubscriberSnapshot, 60 * 60 * 1000);
 captureSubscriberSnapshot();
 console.log('📈 Снимки числа подписчиков включены (раз в час, по всем проектам с telegram_channel_id) + учёт вступлений/выходов');
