@@ -3,7 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
 const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const TEXT_MODEL = 'anthropic/claude-opus-5';
-const POST_HOURS_UTC = [9, 13, 17, 21];
+// Слоты публикации — 08:30 / 12:35 / 19:30 / 21:30 МСК (UTC+3), пересчитано в UTC.
+const POST_SLOTS_UTC = [
+  { h: 5, m: 30 },
+  { h: 9, m: 35 },
+  { h: 16, m: 30 },
+  { h: 18, m: 30 }
+];
 
 const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -91,7 +97,8 @@ export default async function handler(req, res) {
       items.forEach((post, idx) => {
         const scheduledAt = new Date(now);
         scheduledAt.setUTCDate(scheduledAt.getUTCDate() + day);
-        scheduledAt.setUTCHours(POST_HOURS_UTC[idx % POST_HOURS_UTC.length], 0, 0, 0);
+        const slot = POST_SLOTS_UTC[idx % POST_SLOTS_UTC.length];
+        scheduledAt.setUTCHours(slot.h, slot.m, 0, 0);
         rows.push({
           project_id: projectId,
           platform: 'telegram',
