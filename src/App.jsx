@@ -128,8 +128,12 @@ function App() {
   const [reminders, setReminders] = useState([]);
   const [reminderForm, setReminderForm] = useState({ title: '', when: '' });
   const [selectedProject, setSelectedProject] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [projectTab, setProjectTab] = useState('idea');
+  const [activeTab, setActiveTab] = useState(() => {
+    try { return localStorage.getItem('pona_activeTab') || 'dashboard'; } catch { return 'dashboard'; }
+  });
+  const [projectTab, setProjectTab] = useState(() => {
+    try { return localStorage.getItem('pona_projectTab') || 'idea'; } catch { return 'idea'; }
+  });
   const [projectContent, setProjectContent] = useState([]);
   const [contentLoading, setContentLoading] = useState(false);
   const [contentFilter, setContentFilter] = useState('all');
@@ -189,7 +193,6 @@ function App() {
       const savedTab = localStorage.getItem('pona_activeTab');
       const savedProjectId = localStorage.getItem('pona_selectedProjectId');
       const savedProjectTab = localStorage.getItem('pona_projectTab');
-      if (savedTab) setActiveTab(savedTab);
       if (savedTab === 'projects' && savedProjectId) {
         const proj = (projectsData || []).find(p => p.id === savedProjectId);
         if (proj) openProject(proj, savedProjectTab || 'idea');
