@@ -836,6 +836,7 @@ function App() {
         { role: 'user', content: `Разработай подробную концепцию проекта "${selectedProject.name}"${selectedProject.description ? ': ' + selectedProject.description : ''}.${extra} Опиши: идею, стратегию, монетизацию, целевую аудиторию.` }
       ], controller.signal);
       setIdeaResult(answer);
+      await supabase.from('projects').update({ idea_text: answer }).eq('id', selectedProject.id);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -860,7 +861,9 @@ function App() {
         { role: 'user', content: `Сделай анализ ниши для проекта "${selectedProject.name}".${extra}${competitorBlock} Опиши: тренды, конкурентов, фишки, монетизацию.` }
       ], controller.signal);
       const errorNote = errors.length ? `\n\n⚠️ Не удалось получить данные по каналам: ${errors.join('; ')}` : '';
-      setAnalysisResult(answer + errorNote);
+      const fullAnswer = answer + errorNote;
+      setAnalysisResult(fullAnswer);
+      await supabase.from('projects').update({ analysis_text: fullAnswer }).eq('id', selectedProject.id);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -884,6 +887,7 @@ function App() {
         { role: 'user', content: `Составь полную стратегию развития Telegram-канала для проекта "${selectedProject.name}", опираясь на идею и анализ ниши/конкурентов.${extra}${contextBlock} Опиши подробно: 1) стратегию развития канала; 2) варианты монетизации — на чём конкретно можно зарабатывать; 3) как привлекать и приглашать подписчиков, откуда брать первую аудиторию; 4) контент-план на месяц по неделям — темы, форматы, площадки.` }
       ], controller.signal);
       setPlanResult(answer);
+      await supabase.from('projects').update({ plan_text: answer }).eq('id', selectedProject.id);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -922,6 +926,7 @@ function App() {
         { role: 'user', content: `Вот концепция проекта:\n\n${ideaAnswer}\n\nИ анализ ниши/конкурентов:\n\n${analysisAnswer}\n\nНа основе этого составь полную стратегию развития Telegram-канала для проекта "${selectedProject.name}".${planExtra} Опиши подробно: 1) стратегию развития канала; 2) варианты монетизации — на чём конкретно можно зарабатывать; 3) как привлекать и приглашать подписчиков, откуда брать первую аудиторию; 4) контент-план на месяц по неделям — темы, форматы, площадки.` }
       ], controller.signal);
       setPlanResult(planAnswer);
+      await supabase.from('projects').update({ idea_text: ideaAnswer, analysis_text: analysisAnswer, plan_text: planAnswer }).eq('id', selectedProject.id);
     } catch (err) {
       if (err.name !== 'AbortError') throw err;
     } finally {
@@ -1440,7 +1445,7 @@ function App() {
             </div>
             <div className="project-list">
               {projects.map((project) => (
-                <div key={project.id} className={`project-item ${selectedProject?.id === project.id ? 'active' : ''}`} onClick={() => { setSelectedProject(project); setProjectTab('idea'); loadProjectContent(project.id); setIdeaResult(''); setAnalysisResult(''); setPlanResult(''); }}>
+                <div key={project.id} className={`project-item ${selectedProject?.id === project.id ? 'active' : ''}`} onClick={() => { setSelectedProject(project); setProjectTab('idea'); loadProjectContent(project.id); setIdeaResult(project.idea_text || ''); setAnalysisResult(project.analysis_text || ''); setPlanResult(project.plan_text || ''); }}>
                   <span className="project-color" style={{ background: project.color || '#667eea' }}></span>
                   <span className="project-name">{project.name}</span>
                   <span className="project-status">{getStatusLabel(project.status)}</span>
