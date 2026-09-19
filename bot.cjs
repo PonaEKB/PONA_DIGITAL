@@ -669,11 +669,11 @@ async function notifyNewDrafts() {
           { text: '❌ Отклонить', callback_data: `reject:${item.id}` }
         ]] };
         if (mediaUrl && item.media_type === 'audio') {
-          await bot.telegram.sendAudio(OWNER_CHAT_ID, mediaUrl, { caption, reply_markup: keyboard });
+          await bot.telegram.sendAudio(OWNER_CHAT_ID, mediaUrl, { caption, parse_mode: 'HTML', reply_markup: keyboard });
         } else if (mediaUrl) {
-          await bot.telegram.sendPhoto(OWNER_CHAT_ID, mediaUrl, { caption, reply_markup: keyboard });
+          await bot.telegram.sendPhoto(OWNER_CHAT_ID, mediaUrl, { caption, parse_mode: 'HTML', reply_markup: keyboard });
         } else {
-          await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { reply_markup: keyboard });
+          await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { parse_mode: 'HTML', reply_markup: keyboard });
         }
       } catch (err) {
         console.log(`❌ Не удалось отправить на утверждение пост ${item.id}: ${err.message}`);
@@ -732,12 +732,12 @@ async function notifyChemodanBatch() {
         if (urls.length > 1) {
           // Telegram не разрешает inline-кнопки на альбоме — шлём альбом, затем отдельным
           // сообщением текст с кнопками утверждения.
-          await bot.telegram.sendMediaGroup(OWNER_CHAT_ID, urls.map((u, i) => ({ type: 'photo', media: u, caption: i === 0 ? caption : undefined })));
+          await bot.telegram.sendMediaGroup(OWNER_CHAT_ID, urls.map((u, i) => ({ type: 'photo', media: u, caption: i === 0 ? caption : undefined, parse_mode: i === 0 ? 'HTML' : undefined })));
           await bot.telegram.sendMessage(OWNER_CHAT_ID, `👆 На утверждение (${item.topic || 'без темы'})`, { reply_markup: keyboard });
         } else if (urls.length === 1) {
-          await bot.telegram.sendPhoto(OWNER_CHAT_ID, urls[0], { caption, reply_markup: keyboard });
+          await bot.telegram.sendPhoto(OWNER_CHAT_ID, urls[0], { caption, parse_mode: 'HTML', reply_markup: keyboard });
         } else {
-          await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { reply_markup: keyboard });
+          await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { parse_mode: 'HTML', reply_markup: keyboard });
         }
       } catch (err) {
         console.log(`❌ Не удалось отправить на утверждение пост «Чемодан Историй» ${item.id}: ${err.message}`);
@@ -957,13 +957,13 @@ async function publishScheduledContent() {
       const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
       const urls = item.media_urls && item.media_urls.length > 0 ? item.media_urls : (item.media_url ? [item.media_url] : []);
       if (urls.length > 0 && item.media_type === 'audio') {
-        await bot.telegram.sendAudio(channelId, urls[0], { caption, title: item.title || undefined });
+        await bot.telegram.sendAudio(channelId, urls[0], { caption, parse_mode: 'HTML', title: item.title || undefined });
       } else if (urls.length > 1) {
-        await bot.telegram.sendMediaGroup(channelId, urls.map((u, i) => ({ type: 'photo', media: u, caption: i === 0 ? caption : undefined })));
+        await bot.telegram.sendMediaGroup(channelId, urls.map((u, i) => ({ type: 'photo', media: u, caption: i === 0 ? caption : undefined, parse_mode: i === 0 ? 'HTML' : undefined })));
       } else if (urls.length === 1) {
-        await bot.telegram.sendPhoto(channelId, urls[0], { caption });
+        await bot.telegram.sendPhoto(channelId, urls[0], { caption, parse_mode: 'HTML' });
       } else {
-        await bot.telegram.sendMessage(channelId, text);
+        await bot.telegram.sendMessage(channelId, text, { parse_mode: 'HTML' });
       }
       await supabase.from('content_items').update({ status: 'published', published_at: new Date().toISOString(), error: null }).eq('id', item.id);
       console.log(`✅ Опубликован пост "${item.title || item.id}" в Telegram (канал ${channelId})`);
