@@ -691,6 +691,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // всплеском, потому что владелец явно попросил утверждать этот канал большими пачками раз в 4 дня.
 let chemodanBatchInProgress = false;
 
+// Картинки для «Чемодан Историй» — настоящие фото с Wikimedia Commons (подобраны заранее,
+// хранятся в content_items.media_urls), а не AI-генерация. Экономит токены и точнее по содержанию.
 async function notifyChemodanBatch() {
   if (!OWNER_CHAT_ID || chemodanBatchInProgress) return;
   chemodanBatchInProgress = true;
@@ -709,36 +711,6 @@ async function notifyChemodanBatch() {
 
     if (error || !items || items.length === 0) return;
 
-    // У части постов ещё нет image_prompt (текст писался вручную, без картинок) — досочиняем
-    // промпты для всей пачки одним запросом, в едином ярком мультяшном стиле канала.
-    const missingPrompt = items.filter(i => !i.image_prompt);
-    if (missingPrompt.length > 0) {
-      try {
-        const r = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
-          body: JSON.stringify({
-            model: MODEL,
-            max_tokens: 4096,
-            messages: [
-              { role: 'system', content: 'Отвечай СТРОГО валидным JSON-массивом, без markdown и пояснений.' },
-              { role: 'user', content: `Придумай промпт на английском для иллюстрации к каждому из этих постов канала о путешествиях "Чемодан Историй". Стиль — яркая насыщенная мультяшная акварельная иллюстрация, тёплая и позитивная, без текста и букв на картинке, в духе детской книжной иллюстрации про путешествия. Верни JSON-массив объектов {"id": "...", "image_prompt": "..."} в том же порядке.\n\n${JSON.stringify(missingPrompt.map(i => ({ id: i.id, text: i.body })))}` }
-            ]
-          })
-        });
-        const data = await r.json();
-        const raw = data.choices?.[0]?.message?.content || '[]';
-        const parsed = JSON.parse(raw.replace(/```json/gi, '').replace(/```/g, '').trim());
-        for (const p of parsed) {
-          const item = items.find(i => i.id === p.id);
-          if (item) item.image_prompt = p.image_prompt;
-          await supabase.from('content_items').update({ image_prompt: p.image_prompt }).eq('id', p.id);
-        }
-      } catch (err) {
-        console.log(`⚠️ Не удалось досочинить image_prompt для пачки «Чемодан Историй»: ${err.message}`);
-      }
-    }
-
     for (const item of items) {
       try {
         const { data: claimed } = await supabase
@@ -749,31 +721,28 @@ async function notifyChemodanBatch() {
           .select('id');
         if (!claimed || claimed.length === 0) continue;
 
-        let mediaUrl = item.media_url;
-        if (!mediaUrl && item.image_prompt) {
-          try {
-            mediaUrl = await generateAndUploadImage(item.id, item.image_prompt);
-            await supabase.from('content_items').update({ media_url: mediaUrl }).eq('id', item.id);
-          } catch (imgErr) {
-            console.log(`⚠️ Не удалось сгенерировать картинку для ${item.id}: ${imgErr.message}`);
-          }
-        }
-
         const when = item.scheduled_at ? new Date(item.scheduled_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : 'без даты';
         const caption = `На утверждение (${item.topic || 'без темы'}), план на ${when} МСК:\n\n${item.body}`.slice(0, 1024);
         const keyboard = { inline_keyboard: [[
           { text: '✅ Утвердить', callback_data: `approve:${item.id}` },
           { text: '❌ Отклонить', callback_data: `reject:${item.id}` }
         ]] };
-        if (mediaUrl) {
-          await bot.telegram.sendPhoto(OWNER_CHAT_ID, mediaUrl, { caption, reply_markup: keyboard });
+        const urls = item.media_urls && item.media_urls.length > 0 ? item.media_urls : (item.media_url ? [item.media_url] : []);
+
+        if (urls.length > 1) {
+          // Telegram не разрешает inline-кнопки на альбоме — шлём альбом, затем отдельным
+          // сообщением текст с кнопками утверждения.
+          await bot.telegram.sendMediaGroup(OWNER_CHAT_ID, urls.map((u, i) => ({ type: 'photo', media: u, caption: i === 0 ? caption : undefined })));
+          await bot.telegram.sendMessage(OWNER_CHAT_ID, `👆 На утверждение (${item.topic || 'без темы'})`, { reply_markup: keyboard });
+        } else if (urls.length === 1) {
+          await bot.telegram.sendPhoto(OWNER_CHAT_ID, urls[0], { caption, reply_markup: keyboard });
         } else {
           await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { reply_markup: keyboard });
         }
       } catch (err) {
         console.log(`❌ Не удалось отправить на утверждение пост «Чемодан Историй» ${item.id}: ${err.message}`);
       }
-      await sleep(4000); // небольшая пауза между картинками, чтобы не давить на Router AI разом
+      await sleep(1500);
     }
   } catch (err) {
     console.log(`⚠️ Ошибка пачки «Чемодан Историй»: ${err.message}`);
@@ -985,12 +954,14 @@ async function publishScheduledContent() {
       if (!claimed || claimed.length === 0) continue;
 
       const text = item.title ? `${item.title}\n\n${item.body}` : item.body;
-      if (item.media_url && item.media_type === 'audio') {
-        const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
-        await bot.telegram.sendAudio(channelId, item.media_url, { caption, title: item.title || undefined });
-      } else if (item.media_url) {
-        const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
-        await bot.telegram.sendPhoto(channelId, item.media_url, { caption });
+      const caption = text.length > 1024 ? text.slice(0, 1021) + '...' : text;
+      const urls = item.media_urls && item.media_urls.length > 0 ? item.media_urls : (item.media_url ? [item.media_url] : []);
+      if (urls.length > 0 && item.media_type === 'audio') {
+        await bot.telegram.sendAudio(channelId, urls[0], { caption, title: item.title || undefined });
+      } else if (urls.length > 1) {
+        await bot.telegram.sendMediaGroup(channelId, urls.map((u, i) => ({ type: 'photo', media: u, caption: i === 0 ? caption : undefined })));
+      } else if (urls.length === 1) {
+        await bot.telegram.sendPhoto(channelId, urls[0], { caption });
       } else {
         await bot.telegram.sendMessage(channelId, text);
       }
@@ -1137,8 +1108,10 @@ if (OWNER_CHAT_ID) {
   scheduleReminderChecks();
   console.log('🔔 Проверка напоминаний включена (дважды в сутки: 06:00 и 22:00 по Екатеринбургу)');
 
-  // Временно отключено: стиль картинок не подходил под контент, останавливаем до пересмотра промптов.
-  console.log('⏸️ Пачка «Чемодан Историй» приостановлена — стиль картинок пересматривается');
+  // Без немедленного запуска при старте — иначе каждый передеплой слал бы новую пачку.
+  // Первую пачку с настоящими фото отправляем один раз вручную отдельным скриптом.
+  setInterval(notifyChemodanBatch, 4 * 24 * 60 * 60 * 1000);
+  console.log('🧳 Пачка «Чемодан Историй» на утверждение включена (раз в 4 дня, настоящие фото)');
 } else {
   console.log('⚠️ OWNER_CHAT_ID не задан — черновики не будут приходить на утверждение в личку');
 }
