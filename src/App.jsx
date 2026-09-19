@@ -165,12 +165,41 @@ function App() {
   const abortControllerRef = useRef(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setUser(session?.user ?? null);
-      if (session?.user) loadAllData();
+      if (session?.user) {
+        const projectsData = await loadAllData();
+        restoreUiState(projectsData);
+      }
       setLoading(false);
     });
   }, []);
+
+  function openProject(project, tab = 'idea') {
+    setSelectedProject(project);
+    setProjectTab(tab);
+    loadProjectContent(project.id);
+    setIdeaResult(project.idea_text || '');
+    setAnalysisResult(project.analysis_text || '');
+    setPlanResult(project.plan_text || '');
+  }
+
+  function restoreUiState(projectsData) {
+    try {
+      const savedTab = localStorage.getItem('pona_activeTab');
+      const savedProjectId = localStorage.getItem('pona_selectedProjectId');
+      const savedProjectTab = localStorage.getItem('pona_projectTab');
+      if (savedTab) setActiveTab(savedTab);
+      if (savedTab === 'projects' && savedProjectId) {
+        const proj = (projectsData || []).find(p => p.id === savedProjectId);
+        if (proj) openProject(proj, savedProjectTab || 'idea');
+      }
+    } catch {}
+  }
+
+  useEffect(() => { try { localStorage.setItem('pona_activeTab', activeTab); } catch {} }, [activeTab]);
+  useEffect(() => { try { if (selectedProject) localStorage.setItem('pona_selectedProjectId', selectedProject.id); } catch {} }, [selectedProject]);
+  useEffect(() => { try { localStorage.setItem('pona_projectTab', projectTab); } catch {} }, [projectTab]);
 
   async function loadAllData() {
     const { data: projectsData } = await supabase.from('projects').select('*').order('created_at', { ascending: false });
@@ -183,6 +212,7 @@ function App() {
     setFinances(financesData || []);
     setPendingApprovalCount(draftCount || 0);
     setReminders(remindersData || []);
+    return projectsData || [];
   }
 
   async function completeReminder(id) {
@@ -424,6 +454,11 @@ function App() {
     setFinances([]);
     setSelectedProject(null);
     setActiveTab('dashboard');
+    try {
+      localStorage.removeItem('pona_activeTab');
+      localStorage.removeItem('pona_selectedProjectId');
+      localStorage.removeItem('pona_projectTab');
+    } catch {}
   }
 
   async function createProject() {
@@ -1457,7 +1492,7 @@ function App() {
             </div>
             <div className="project-list">
               {projects.map((project) => (
-                <div key={project.id} className={`project-item ${selectedProject?.id === project.id ? 'active' : ''}`} onClick={() => { setSelectedProject(project); setProjectTab('idea'); loadProjectContent(project.id); setIdeaResult(project.idea_text || ''); setAnalysisResult(project.analysis_text || ''); setPlanResult(project.plan_text || ''); }}>
+                <div key={project.id} className={`project-item ${selectedProject?.id === project.id ? 'active' : ''}`} onClick={() => openProject(project)}>
                   <span className="project-color" style={{ background: project.color || '#667eea' }}></span>
                   <span className="project-name">{project.name}</span>
                   <span className="project-status">{getStatusLabel(project.status)}</span>
