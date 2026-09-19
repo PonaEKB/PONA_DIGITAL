@@ -1627,8 +1627,8 @@ function App() {
                             <span className="content-platform">{platform.icon} {platform.label}{!platform.live && <span className="content-platform-badge">черновик до API</span>}</span>
                             {item.media_url && item.media_type === 'audio' ? (
                               <audio controls src={item.media_url} style={{ height: 32 }} />
-                            ) : item.media_url && (
-                              <img className="content-thumb" src={item.media_url} alt="" onClick={() => setPreviewItem(item)} style={{ cursor: 'pointer' }} />
+                            ) : (item.media_urls?.[0] || item.media_url) && (
+                              <img className="content-thumb" src={item.media_urls?.[0] || item.media_url} alt="" onClick={() => setPreviewItem(item)} style={{ cursor: 'pointer' }} />
                             )}
                             <div className="content-body">
                               <span className="content-title">{item.title}</span>
@@ -1935,8 +1935,14 @@ function App() {
               </div>
               {previewItem.media_url && previewItem.media_type === 'audio' ? (
                 <audio controls src={previewItem.media_url} style={{ width: '100%' }} />
-              ) : previewItem.media_url ? (
-                <img className="tg-preview-image" src={previewItem.media_url} alt="" />
+              ) : previewItem.media_urls?.length > 1 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: previewItem.media_urls.length > 2 ? '1fr 1fr' : '1fr', gap: 4 }}>
+                  {previewItem.media_urls.map((u, i) => (
+                    <img key={i} className="tg-preview-image" src={u} alt="" style={{ margin: 0 }} />
+                  ))}
+                </div>
+              ) : (previewItem.media_urls?.[0] || previewItem.media_url) ? (
+                <img className="tg-preview-image" src={previewItem.media_urls?.[0] || previewItem.media_url} alt="" />
               ) : (
                 <div className="tg-preview-image tg-preview-no-image">Картинка ещё не сгенерирована</div>
               )}
