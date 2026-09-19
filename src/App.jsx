@@ -98,6 +98,18 @@ function SubscriberChart({ snapshots }) {
   );
 }
 
+const TG_ALLOWED_TAGS = ['b', 'strong', 'i', 'em', 'u', 'ins', 's', 'strike', 'del', 'code', 'pre'];
+function renderTelegramHtml(text) {
+  if (!text) return '';
+  let escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  TG_ALLOWED_TAGS.forEach((tag) => {
+    escaped = escaped
+      .replace(new RegExp(`&lt;${tag}&gt;`, 'g'), `<${tag}>`)
+      .replace(new RegExp(`&lt;/${tag}&gt;`, 'g'), `</${tag}>`);
+  });
+  return escaped.replace(/\n/g, '<br/>');
+}
+
 function App() {
   const [projects, setProjects] = useState([]);
   const [allTasks, setAllTasks] = useState([]);
@@ -1637,7 +1649,7 @@ function App() {
                             )}
                             <div className="content-body">
                               <span className="content-title">{item.title}</span>
-                              <span className="content-text">{item.body}</span>
+                              <span className="content-text" dangerouslySetInnerHTML={{ __html: renderTelegramHtml(item.body) }} />
                               {item.scheduled_at && <span className="content-text">📅 {new Date(item.scheduled_at).toLocaleString('ru-RU')}</span>}
                             </div>
                             <span className={`content-status status-${item.status}`}>{getContentStatusLabel(item.status)}</span>
@@ -1951,7 +1963,7 @@ function App() {
               ) : (
                 <div className="tg-preview-image tg-preview-no-image">Картинка ещё не сгенерирована</div>
               )}
-              <div className="tg-preview-caption">{previewItem.body}</div>
+              <div className="tg-preview-caption" dangerouslySetInnerHTML={{ __html: renderTelegramHtml(previewItem.body) }} />
               <div className="tg-preview-meta">
                 {previewItem.status === 'published' && previewItem.published_at
                   ? `Опубликовано: ${new Date(previewItem.published_at).toLocaleString('ru-RU')}`
