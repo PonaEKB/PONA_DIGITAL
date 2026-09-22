@@ -619,12 +619,16 @@ async function notifyNewDrafts() {
     const freeSlots = MAX_PENDING_APPROVAL - (pendingCount || 0);
     if (freeSlots <= 0) return;
 
+    // release_at — проекты со своим ритмом подтверждения (напр. «Звёздный Компас», раз в сутки
+    // одной пачкой в 23:00 МСК) помечают черновики так, чтобы этот общий цикл не забирал их
+    // раньше времени. NULL — как раньше, без ограничения.
     const { data: items, error } = await supabase
       .from('content_items')
       .select('*')
       .eq('platform', 'telegram')
       .eq('status', 'draft')
       .is('notified_at', null)
+      .or(`release_at.is.null,release_at.lte.${new Date().toISOString()}`)
       .order('scheduled_at', { ascending: true })
       .limit(freeSlots);
 
@@ -749,6 +753,94 @@ async function notifyChemodanBatch() {
   } finally {
     chemodanBatchInProgress = false;
   }
+}
+
+// «Звёздный Компас»: раз в сутки, в 23:00 МСК, отправляем на утверждение 3 поста следующего дня
+// (общий гороскоп на все знаки / любовный / финансовый). В отличие от общего цикла (notifyNewDrafts),
+// не участвует в общем лимите MAX_PENDING_APPROVAL и не привязан к таймингу других проектов — свой
+// отдельный ритм, как и «Чемодан Историй». Картинки — AI-генерация (в отличие от «Чемодан Историй»,
+// тут не было проблем с соответствием стиля содержанию).
+let zvezdnyBatchInProgress = false;
+
+async function notifyZvezdnyKompasBatch() {
+  if (!OWNER_CHAT_ID || zvezdnyBatchInProgress) return;
+  zvezdnyBatchInProgress = true;
+  try {
+    const { data: project } = await supabase.from('projects').select('id').eq('name', HOROSCOPE_PROJECT_NAME).maybeSingle();
+    if (!project) return;
+
+    const { data: items, error } = await supabase
+      .from('content_items')
+      .select('*')
+      .eq('project_id', project.id)
+      .eq('status', 'draft')
+      .is('notified_at', null)
+      .order('scheduled_at', { ascending: true })
+      .limit(3);
+
+    if (error || !items || items.length === 0) return;
+
+    for (const item of items) {
+      try {
+        const { data: claimed } = await supabase
+          .from('content_items')
+          .update({ notified_at: new Date().toISOString() })
+          .eq('id', item.id)
+          .is('notified_at', null)
+          .select('id');
+        if (!claimed || claimed.length === 0) continue;
+
+        let mediaUrl = item.media_url;
+        if (!mediaUrl && item.image_prompt) {
+          try {
+            mediaUrl = await generateAndUploadImage(item.id, item.image_prompt);
+            await supabase.from('content_items').update({ media_url: mediaUrl }).eq('id', item.id);
+          } catch (imgErr) {
+            console.log(`⚠️ Не удалось сгенерировать картинку для «Звёздный Компас» ${item.id}: ${imgErr.message}`);
+          }
+        }
+
+        const when = item.scheduled_at ? new Date(item.scheduled_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : 'без даты';
+        const caption = `На утверждение (${item.topic || 'без темы'}), план на ${when} МСК:\n\n${item.body}`.slice(0, 1024);
+        const keyboard = { inline_keyboard: [[
+          { text: '✅ Утвердить', callback_data: `approve:${item.id}` },
+          { text: '❌ Отклонить', callback_data: `reject:${item.id}` }
+        ]] };
+
+        if (mediaUrl) {
+          await bot.telegram.sendPhoto(OWNER_CHAT_ID, mediaUrl, { caption, parse_mode: 'HTML', reply_markup: keyboard });
+        } else {
+          await bot.telegram.sendMessage(OWNER_CHAT_ID, caption, { parse_mode: 'HTML', reply_markup: keyboard });
+        }
+      } catch (err) {
+        console.log(`❌ Не удалось отправить на утверждение пост «Звёздный Компас» ${item.id}: ${err.message}`);
+      }
+      await sleep(1500);
+    }
+  } catch (err) {
+    console.log(`⚠️ Ошибка пачки «Звёздный Компас»: ${err.message}`);
+  } finally {
+    zvezdnyBatchInProgress = false;
+  }
+}
+
+const ZVEZDNY_BATCH_UTC_HOUR = 20; // 23:00 МСК (UTC+3)
+
+function msUntilNextUtcHour(hour) {
+  const now = new Date();
+  const dayStartUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  for (const dayOffset of [0, 1]) {
+    const candidate = dayStartUTC + dayOffset * 86400000 + hour * 3600000;
+    if (candidate > now.getTime()) return candidate - now.getTime();
+  }
+  return 86400000;
+}
+
+function scheduleZvezdnyKompasBatch() {
+  setTimeout(async () => {
+    await notifyZvezdnyKompasBatch();
+    scheduleZvezdnyKompasBatch();
+  }, msUntilNextUtcHour(ZVEZDNY_BATCH_UTC_HOUR));
 }
 
 bot.action(/^approve:(.+)$/, async (ctx) => {
@@ -990,9 +1082,17 @@ function startBot() {
 startBot();
 console.log('🤖 Бот PONA DIGITAL + Claude запущен!');
 
-// ===== Отдельный публичный бот «Твой Гороскоп»: гороскоп по знаку зодиака по запросу =====
+// ===== Отдельный публичный бот «Звёздный Компас»: гороскоп по знаку зодиака по запросу =====
 
 const HOROSCOPE_BOT_TOKEN = process.env.HOROSCOPE_BOT_TOKEN;
+const HOROSCOPE_PROJECT_NAME = 'Звёздный Компас';
+// Рубрики дня — используются и тут (чтобы найти нужный пост), и в generate-horoscope-content.js
+// (чтобы промаркировать посты при создании). Совпадают с topic каждого content_item.
+const HOROSCOPE_TOPICS = {
+  general: `${HOROSCOPE_PROJECT_NAME} — Общий`,
+  love: `${HOROSCOPE_PROJECT_NAME} — Любовь`,
+  finance: `${HOROSCOPE_PROJECT_NAME} — Финансы`
+};
 
 if (HOROSCOPE_BOT_TOKEN) {
   const horoscopeBot = new Telegraf(HOROSCOPE_BOT_TOKEN);
@@ -1034,7 +1134,7 @@ if (HOROSCOPE_BOT_TOKEN) {
     if (!sign) return;
 
     try {
-      const { data: project } = await supabase.from('projects').select('id').eq('name', 'Твой Гороскоп').maybeSingle();
+      const { data: project } = await supabase.from('projects').select('id').eq('name', HOROSCOPE_PROJECT_NAME).maybeSingle();
       if (!project) {
         await ctx.reply('Гороскоп пока не подключён, загляните позже.');
         return;
@@ -1045,10 +1145,13 @@ if (HOROSCOPE_BOT_TOKEN) {
       const todayEnd = new Date(todayStart);
       todayEnd.setUTCDate(todayEnd.getUTCDate() + 1);
 
+      // Каждый день у проекта теперь 4 разных поста (утро/любовь/совместимость/вечер) —
+      // боту нужен именно утренний, где на каждый знак своя строка.
       const { data: post } = await supabase
         .from('content_items')
         .select('body, scheduled_at')
         .eq('project_id', project.id)
+        .eq('topic', HOROSCOPE_TOPICS.general)
         .gte('scheduled_at', todayStart.toISOString())
         .lt('scheduled_at', todayEnd.toISOString())
         .order('scheduled_at', { ascending: true })
@@ -1082,9 +1185,9 @@ if (HOROSCOPE_BOT_TOKEN) {
     });
   }
   startHoroscopeBot();
-  console.log('🔮 Бот «Твой Гороскоп» запущен!');
+  console.log('🔮 Бот «Звёздный Компас» запущен!');
 } else {
-  console.log('⚠️ HOROSCOPE_BOT_TOKEN не задан — бот «Твой Гороскоп» отключён');
+  console.log('⚠️ HOROSCOPE_BOT_TOKEN не задан — бот «Звёздный Компас» отключён');
 }
 
 setInterval(captureSubscriberSnapshot, 60 * 60 * 1000);
@@ -1112,6 +1215,9 @@ if (OWNER_CHAT_ID) {
   // Первую пачку с настоящими фото отправляем один раз вручную отдельным скриптом.
   setInterval(notifyChemodanBatch, 4 * 24 * 60 * 60 * 1000);
   console.log('🧳 Пачка «Чемодан Историй» на утверждение включена (раз в 4 дня, настоящие фото)');
+
+  scheduleZvezdnyKompasBatch();
+  console.log('🔮 Пачка «Звёздный Компас» на утверждение включена (раз в сутки, в 23:00 МСК, 3 поста)');
 } else {
   console.log('⚠️ OWNER_CHAT_ID не задан — черновики не будут приходить на утверждение в личку');
 }

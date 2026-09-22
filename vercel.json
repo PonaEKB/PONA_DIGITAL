@@ -2,6 +2,9 @@
   "functions": {
     "api/generate-content.js": {
       "maxDuration": 300
+    },
+    "api/generate-horoscope-content.js": {
+      "maxDuration": 300
     }
   }
 }
