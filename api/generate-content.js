@@ -90,7 +90,7 @@ async function generateHoroscopeDayPosts(dayIndex) {
   const signsList = ZODIAC_SIGNS.join(', ');
   const data = await callRouter('/chat/completions', {
     model: TEXT_MODEL,
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [
       {
         role: 'system',
