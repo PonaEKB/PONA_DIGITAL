@@ -15,6 +15,9 @@ const POST_SLOTS_UTC = [
 // «Звёздный Компас» — отдельная ветка ниже (handleHoroscope): свои рубрики/слоты и
 // автопубликация без утверждения, вместо общей generatePostsText/POST_SLOTS_UTC логики.
 const HOROSCOPE_PROJECT_NAME = 'Звёздный Компас';
+// Дешевле Opus в 2.5 раза, для формульного текста гороскопов разница в качестве незаметна —
+// владелец попросил не жечь бюджет Router AI на самую дорогую модель ради этого контента.
+const HOROSCOPE_TEXT_MODEL = 'anthropic/claude-sonnet-5';
 const HOROSCOPE_SLOTS_UTC = [
   { h: 5, m: 30, key: 'general' },   // 08:30 МСК — общий гороскоп на все знаки
   { h: 9, m: 30, key: 'business' },  // 12:30 МСК — деловой гороскоп
@@ -89,7 +92,7 @@ async function generatePostsText({ projectId, projectName, context, days, postsP
 async function generateHoroscopeDayPosts(dayIndex) {
   const signsList = ZODIAC_SIGNS.join(', ');
   const data = await callRouter('/chat/completions', {
-    model: TEXT_MODEL,
+    model: HOROSCOPE_TEXT_MODEL,
     max_tokens: 8192,
     messages: [
       {
