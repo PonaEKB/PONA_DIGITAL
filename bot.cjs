@@ -1121,7 +1121,7 @@ if (HOROSCOPE_BOT_TOKEN) {
   }
 
   horoscopeBot.start((ctx) => {
-    ctx.reply('🔮 Привет! Выбери свой знак зодиака — пришлю гороскоп на сегодня.', { reply_markup: zodiacKeyboard() });
+    ctx.reply('🔮 Привет! Выбери свой знак зодиака — пришлю прогноз на ближайшие 10 дней.', { reply_markup: zodiacKeyboard() });
   });
 
   horoscopeBot.command('menu', (ctx) => {
@@ -1142,32 +1142,37 @@ if (HOROSCOPE_BOT_TOKEN) {
 
       const todayStart = new Date();
       todayStart.setUTCHours(0, 0, 0, 0);
-      const todayEnd = new Date(todayStart);
-      todayEnd.setUTCDate(todayEnd.getUTCDate() + 1);
+      const rangeEnd = new Date(todayStart);
+      rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 10);
 
-      // Каждый день у проекта теперь 4 разных поста (утро/любовь/совместимость/вечер) —
-      // боту нужен именно утренний, где на каждый знак своя строка.
-      const { data: post } = await supabase
+      // Каждый день у проекта теперь 3 разных поста (общий/деловой/любовь) — боту нужен именно
+      // общий, где на каждый знак своя строка. Берём сразу на 10 дней вперёд, а не только сегодня.
+      const { data: posts } = await supabase
         .from('content_items')
         .select('body, scheduled_at')
         .eq('project_id', project.id)
         .eq('topic', HOROSCOPE_TOPICS.general)
         .gte('scheduled_at', todayStart.toISOString())
-        .lt('scheduled_at', todayEnd.toISOString())
-        .order('scheduled_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .lt('scheduled_at', rangeEnd.toISOString())
+        .order('scheduled_at', { ascending: true });
 
-      if (!post) {
-        await ctx.reply('Гороскоп на сегодня ещё не готов, загляните чуть позже 🔮');
+      if (!posts || posts.length === 0) {
+        await ctx.reply('Гороскоп на ближайшие дни ещё не готов, загляните чуть позже 🔮');
         return;
       }
 
       const signEmoji = sign.label.split(' ')[0];
-      const line = post.body.split('\n').find(l => l.trim().startsWith(signEmoji));
-      const text = line ? line.trim() : post.body;
+      const lines = posts.map((post) => {
+        const line = post.body.split('\n').find((l) => l.trim().startsWith(signEmoji));
+        const dateLabel = new Date(post.scheduled_at).toLocaleDateString('ru-RU', {
+          day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow'
+        });
+        return `📅 ${dateLabel}: ${line ? line.trim().replace(`${signEmoji} `, '').replace(/^\*\*.+?\*\*\s*—?\s*/, '') : post.body}`;
+      });
 
-      await ctx.reply(`${sign.label}\n\n${text}`, { reply_markup: zodiacKeyboard() });
+      await ctx.reply(`${sign.label} — прогноз на ${lines.length} дн.\n\n${lines.join('\n\n')}`, {
+        reply_markup: zodiacKeyboard()
+      });
     } catch (err) {
       console.log(`⚠️ Ошибка гороскоп-бота: ${err.message}`);
       await ctx.reply('Не получилось получить гороскоп, попробуйте ещё раз чуть позже.');
