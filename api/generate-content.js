@@ -205,9 +205,62 @@ async function handleHoroscope(req, res) {
   }
 }
 
+// Докачка картинок для уже сгенерированных постов «Звёздного Компаса», у которых есть
+// image_prompt, но нет media_url (например, если раньше упёрлись в rate limit Pollinations).
+// Текст не трогаем и не платим за него — только бесплатная картинка + апдейт строки.
+async function handleHoroscopeImageBackfill(req, res) {
+  const { limit = 12, fromDate, toDate } = req.body || {};
+
+  try {
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('name', HOROSCOPE_PROJECT_NAME)
+      .maybeSingle();
+    if (projectError) throw new Error(projectError.message);
+    if (!project) throw new Error(`Проект "${HOROSCOPE_PROJECT_NAME}" не найден в CRM`);
+
+    let query = supabase
+      .from('content_items')
+      .select('id, scheduled_at, image_prompt')
+      .eq('project_id', project.id)
+      .is('media_url', null)
+      .not('image_prompt', 'is', null)
+      .order('scheduled_at', { ascending: true })
+      .limit(limit);
+    if (fromDate) query = query.gte('scheduled_at', fromDate);
+    if (toDate) query = query.lte('scheduled_at', toDate);
+
+    const { data: items, error } = await query;
+    if (error) throw new Error(error.message);
+
+    let filled = 0;
+    const errors = [];
+    for (const item of items || []) {
+      try {
+        const mediaUrl = await generateAndUploadImage(`${project.id}-backfill-${item.id}`, item.image_prompt);
+        const { error: updErr } = await supabase.from('content_items').update({ media_url: mediaUrl }).eq('id', item.id);
+        if (updErr) throw new Error(updErr.message);
+        filled++;
+      } catch (imgErr) {
+        errors.push(`${item.scheduled_at}: ${imgErr.message}`);
+      }
+    }
+
+    res.status(200).json({ filled, remaining_checked: (items || []).length, errors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  if (req.body?.horoscope && req.body?.backfillImages) {
+    await handleHoroscopeImageBackfill(req, res);
     return;
   }
 
