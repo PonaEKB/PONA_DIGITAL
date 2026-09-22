@@ -133,9 +133,10 @@ async function generateAndUploadImage(idHint, prompt) {
 async function handleHoroscope(req, res) {
   const { days = 1, dayOffset = 0 } = req.body || {};
   // Каждый день — 1 текстовый вызов + 3 генерации картинок — держим чанк небольшим, чтобы не
-  // упереться в лимит времени серверлесс-функции (300с).
-  if (days < 1 || days > 5) {
-    res.status(400).json({ error: 'days must be between 1 and 5 per request (chunk a month across ~6 calls)' });
+  // упереться в лимит времени серверлесс-функции (300с). Промежуточная запись в базу (см. ниже)
+  // всё равно подстрахует от потери уже сделанной работы, но лучше не рисковать таймаутом почём зря.
+  if (days < 1 || days > 3) {
+    res.status(400).json({ error: 'days must be between 1 and 3 per request (chunk a month across ~10 calls)' });
     return;
   }
 
@@ -149,12 +150,13 @@ async function handleHoroscope(req, res) {
     if (!project) throw new Error(`Проект "${HOROSCOPE_PROJECT_NAME}" не найден в CRM`);
 
     const now = new Date();
-    const rows = [];
     const imageErrors = [];
+    let inserted = 0;
 
     for (let i = 0; i < days; i++) {
       const dayIndex = dayOffset + i;
       const posts = await generateHoroscopeDayPosts(dayIndex);
+      const dayRows = [];
 
       for (const slot of HOROSCOPE_SLOTS_UTC) {
         const post = posts[slot.key];
@@ -173,7 +175,7 @@ async function handleHoroscope(req, res) {
           }
         }
 
-        rows.push({
+        dayRows.push({
           project_id: project.id,
           platform: 'telegram',
           topic: HOROSCOPE_TOPICS[slot.key],
@@ -184,13 +186,14 @@ async function handleHoroscope(req, res) {
           scheduled_at: scheduledAt.toISOString()
         });
       }
-    }
 
-    let inserted = 0;
-    if (rows.length > 0) {
-      const { data, error } = await supabase.from('content_items').insert(rows).select('id');
-      if (error) throw new Error(error.message);
-      inserted = data?.length || 0;
+      // Пишем в базу сразу после каждого дня, а не всё разом в конце — если функция упрётся
+      // в лимит времени (300с) на 20-м из 30 дней, уже сгенерированные дни не потеряются.
+      if (dayRows.length > 0) {
+        const { data, error } = await supabase.from('content_items').insert(dayRows).select('id');
+        if (error) throw new Error(error.message);
+        inserted += data?.length || 0;
+      }
     }
 
     res.status(200).json({ inserted, daysRequested: days, dayOffset, imageErrors });
