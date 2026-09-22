@@ -3,7 +3,6 @@ import { createClient } from '@supabase/supabase-js';
 const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
 const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const TEXT_MODEL = 'anthropic/claude-opus-5';
-const IMAGE_MODEL = 'krea/krea-2-medium-turbo';
 const MEDIA_BUCKET = 'content-media';
 // Слоты публикации — 08:30 / 12:35 / 19:30 / 21:30 МСК (UTC+3), пересчитано в UTC.
 const POST_SLOTS_UTC = [
@@ -116,22 +115,16 @@ async function generateHoroscopeDayPosts(dayIndex) {
 // Публикация «Звёздного Компаса» автоматическая (status: 'scheduled' сразу), поэтому картинку —
 // в отличие от проектов с утверждением — генерируем здесь и сейчас, а не «на лету» перед отправкой
 // владельцу: для уже-запланированных постов такого отдельного шага больше нет.
+// Картинки — через Pollinations.ai (бесплатно, без ключа), а не через платный Router AI.
 async function generateAndUploadImage(idHint, prompt) {
-  const genRes = await fetch(`${ROUTER_BASE_URL}/images/generations`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
-    body: JSON.stringify({ model: IMAGE_MODEL, prompt, n: 1, size: '1024x1024' })
-  });
-  const genData = await genRes.json();
-  if (!genRes.ok) throw new Error(genData.error?.message || JSON.stringify(genData));
-  const item = genData.data?.[0];
-  if (!item?.b64_json) throw new Error('Пустой ответ генератора изображений');
+  const seed = Math.floor(Math.random() * 1_000_000);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true`;
+  const imgRes = await fetch(url);
+  if (!imgRes.ok) throw new Error(`Pollinations вернул ошибку: ${imgRes.status}`);
+  const buffer = Buffer.from(await imgRes.arrayBuffer());
 
-  const mediaType = item.media_type || 'image/png';
-  const ext = mediaType.includes('png') ? 'png' : mediaType.includes('webp') ? 'webp' : 'jpg';
-  const path = `${idHint}/zvezdny-${Date.now()}.${ext}`;
-  const buffer = Buffer.from(item.b64_json, 'base64');
-  const { error: upErr } = await supabase.storage.from(MEDIA_BUCKET).upload(path, buffer, { contentType: mediaType });
+  const path = `${idHint}/zvezdny-${Date.now()}.jpg`;
+  const { error: upErr } = await supabase.storage.from(MEDIA_BUCKET).upload(path, buffer, { contentType: 'image/jpeg' });
   if (upErr) throw new Error(upErr.message);
   const { data: pub } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
   return pub.publicUrl;
