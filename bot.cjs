@@ -1134,43 +1134,31 @@ if (HOROSCOPE_BOT_TOKEN) {
     if (!sign) return;
 
     try {
-      const { data: project } = await supabase.from('projects').select('id').eq('name', HOROSCOPE_PROJECT_NAME).maybeSingle();
-      if (!project) {
-        await ctx.reply('Гороскоп пока не подключён, загляните позже.');
-        return;
-      }
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const rangeEndStr = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-      const todayStart = new Date();
-      todayStart.setUTCHours(0, 0, 0, 0);
-      const rangeEnd = new Date(todayStart);
-      rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 10);
+      // Индивидуальный гороскоп на знак — отдельная таблица (не парсим строку из поста канала).
+      const { data: entries } = await supabase
+        .from('zodiac_daily_horoscopes')
+        .select('date, text')
+        .eq('sign_key', sign.key)
+        .gte('date', todayStr)
+        .lt('date', rangeEndStr)
+        .order('date', { ascending: true });
 
-      // Каждый день у проекта теперь 3 разных поста (общий/деловой/любовь) — боту нужен именно
-      // общий, где на каждый знак своя строка. Берём сразу на 10 дней вперёд, а не только сегодня.
-      const { data: posts } = await supabase
-        .from('content_items')
-        .select('body, scheduled_at')
-        .eq('project_id', project.id)
-        .eq('topic', HOROSCOPE_TOPICS.general)
-        .gte('scheduled_at', todayStart.toISOString())
-        .lt('scheduled_at', rangeEnd.toISOString())
-        .order('scheduled_at', { ascending: true });
-
-      if (!posts || posts.length === 0) {
+      if (!entries || entries.length === 0) {
         await ctx.reply('Гороскоп на ближайшие дни ещё не готов, загляните чуть позже 🔮');
         return;
       }
 
-      const signEmoji = sign.label.split(' ')[0];
-      const lines = posts.map((post) => {
-        const line = post.body.split('\n').find((l) => l.trim().startsWith(signEmoji));
-        const dateLabel = new Date(post.scheduled_at).toLocaleDateString('ru-RU', {
+      const blocks = entries.map((entry) => {
+        const dateLabel = new Date(entry.date).toLocaleDateString('ru-RU', {
           day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow'
         });
-        return `📅 ${dateLabel}: ${line ? line.trim().replace(`${signEmoji} `, '').replace(/^\*\*.+?\*\*\s*—?\s*/, '') : post.body}`;
+        return `📅 ${dateLabel}\n${entry.text}`;
       });
 
-      await ctx.reply(`${sign.label} — прогноз на ${lines.length} дн.\n\n${lines.join('\n\n')}`, {
+      await ctx.reply(`${sign.label} — прогноз на ${blocks.length} дн.\n\n${blocks.join('\n\n')}`, {
         reply_markup: zodiacKeyboard()
       });
     } catch (err) {

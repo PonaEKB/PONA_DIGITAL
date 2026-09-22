@@ -32,6 +32,11 @@ const ZODIAC_SIGNS = [
   '♈ Овен', '♉ Телец', '♊ Близнецы', '♋ Рак', '♌ Лев', '♍ Дева',
   '♎ Весы', '♏ Скорпион', '♐ Стрелец', '♑ Козерог', '♒ Водолей', '♓ Рыбы'
 ];
+// Ключи как в боте (bot.cjs ZODIAC_SIGNS) — порядок совпадает с ZODIAC_SIGNS выше.
+const ZODIAC_KEYS = [
+  'aries', 'taurus', 'gemini', 'cancer', 'leo', 'virgo',
+  'libra', 'scorpio', 'sagittarius', 'capricorn', 'aquarius', 'pisces'
+];
 
 const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -113,6 +118,72 @@ async function generateHoroscopeDayPosts(dayIndex) {
   const raw = data.choices?.[0]?.message?.content || '{}';
   const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
   return JSON.parse(cleaned);
+}
+
+// Для бота (кнопка «выбери знак») нужен НЕ обрывок строки из общего поста канала, а полноценный
+// отдельный гороскоп на каждый знак — по одному AI-вызову на день, 12 текстов сразу в JSON.
+async function generateIndividualDayHoroscopes(dayIndex) {
+  const data = await callRouter('/chat/completions', {
+    model: HOROSCOPE_TEXT_MODEL,
+    max_tokens: 8192,
+    messages: [
+      {
+        role: 'system',
+        content: 'Ты — астролог. Пишешь короткие персональные гороскопы на день для Telegram-бота «Звёздный Компас». Отвечай СТРОГО валидным JSON-объектом, без markdown-разметки и пояснений.'
+      },
+      {
+        role: 'user',
+        content: `Составь гороскоп на день №${dayIndex + 1} вперёд от сегодня для каждого из 12 знаков зодиака по отдельности: ` +
+          `${ZODIAC_SIGNS.join(', ')}. Для каждого знака — отдельный, самостоятельный текст (3-4 предложения): общий настрой дня, ` +
+          `на что обратить внимание, короткий совет. Позитивно, но реалистично, без общих шаблонных фраз, без markdown-разметки ` +
+          `внутри текста, без эмодзи в начале текста (эмодзи уже есть в названии знака, дублировать не нужно).\n\n` +
+          `Верни JSON вида: {"aries": "...", "taurus": "...", "gemini": "...", "cancer": "...", "leo": "...", "virgo": "...", ` +
+          `"libra": "...", "scorpio": "...", "sagittarius": "...", "capricorn": "...", "aquarius": "...", "pisces": "..."}`
+      }
+    ]
+  });
+  const raw = data.choices?.[0]?.message?.content || '{}';
+  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+async function handleHoroscopeIndividual(req, res) {
+  const { days = 1, dayOffset = 0 } = req.body || {};
+  if (days < 1 || days > 3) {
+    res.status(400).json({ error: 'days must be between 1 and 3 per request' });
+    return;
+  }
+
+  try {
+    const now = new Date();
+    let inserted = 0;
+
+    for (let i = 0; i < days; i++) {
+      const dayIndex = dayOffset + i;
+      const bySign = await generateIndividualDayHoroscopes(dayIndex);
+
+      const date = new Date(now);
+      date.setUTCDate(date.getUTCDate() + dayIndex + 1);
+      const dateStr = date.toISOString().slice(0, 10);
+
+      const rows = ZODIAC_KEYS
+        .filter((key) => bySign[key])
+        .map((key) => ({ sign_key: key, date: dateStr, text: bySign[key] }));
+
+      if (rows.length > 0) {
+        const { data, error } = await supabase
+          .from('zodiac_daily_horoscopes')
+          .upsert(rows, { onConflict: 'sign_key,date' })
+          .select('id');
+        if (error) throw new Error(error.message);
+        inserted += data?.length || 0;
+      }
+    }
+
+    res.status(200).json({ inserted, daysRequested: days, dayOffset });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 // Публикация «Звёздного Компаса» автоматическая (status: 'scheduled' сразу), поэтому картинку —
@@ -261,6 +332,11 @@ export default async function handler(req, res) {
 
   if (req.body?.horoscope && req.body?.backfillImages) {
     await handleHoroscopeImageBackfill(req, res);
+    return;
+  }
+
+  if (req.body?.horoscope && req.body?.individual) {
+    await handleHoroscopeIndividual(req, res);
     return;
   }
 
