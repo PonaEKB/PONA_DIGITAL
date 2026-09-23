@@ -3,12 +3,39 @@ import { createClient } from '@supabase/supabase-js';
 const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
 const ROUTER_KEY = process.env.ROUTER_AI_KEY;
 const TEXT_MODEL = 'anthropic/claude-opus-5';
+const MEDIA_BUCKET = 'content-media';
 // Слоты публикации — 08:30 / 12:35 / 19:30 / 21:30 МСК (UTC+3), пересчитано в UTC.
 const POST_SLOTS_UTC = [
   { h: 5, m: 30 },
   { h: 9, m: 35 },
   { h: 16, m: 30 },
   { h: 18, m: 30 }
+];
+
+// «Звёздный Компас» — отдельная ветка ниже (handleHoroscope): свои рубрики/слоты и
+// автопубликация без утверждения, вместо общей generatePostsText/POST_SLOTS_UTC логики.
+const HOROSCOPE_PROJECT_NAME = 'Звёздный Компас';
+// Дешевле Opus в 2.5 раза, для формульного текста гороскопов разница в качестве незаметна —
+// владелец попросил не жечь бюджет Router AI на самую дорогую модель ради этого контента.
+const HOROSCOPE_TEXT_MODEL = 'anthropic/claude-sonnet-5';
+const HOROSCOPE_SLOTS_UTC = [
+  { h: 5, m: 30, key: 'general' },   // 08:30 МСК — общий гороскоп на все знаки
+  { h: 9, m: 30, key: 'business' },  // 12:30 МСК — деловой гороскоп
+  { h: 17, m: 0, key: 'love' }       // 20:00 МСК — любовный гороскоп
+];
+const HOROSCOPE_TOPICS = {
+  general: `${HOROSCOPE_PROJECT_NAME} — Общий`,
+  business: `${HOROSCOPE_PROJECT_NAME} — Деловой`,
+  love: `${HOROSCOPE_PROJECT_NAME} — Любовь`
+};
+const ZODIAC_SIGNS = [
+  '♈ Овен', '♉ Телец', '♊ Близнецы', '♋ Рак', '♌ Лев', '♍ Дева',
+  '♎ Весы', '♏ Скорпион', '♐ Стрелец', '♑ Козерог', '♒ Водолей', '♓ Рыбы'
+];
+// Ключи как в боте (bot.cjs ZODIAC_SIGNS) — порядок совпадает с ZODIAC_SIGNS выше.
+const ZODIAC_KEYS = [
+  'aries', 'taurus', 'gemini', 'cancer', 'leo', 'virgo',
+  'libra', 'scorpio', 'sagittarius', 'capricorn', 'aquarius', 'pisces'
 ];
 
 const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -66,9 +93,255 @@ async function generatePostsText({ projectId, projectName, context, days, postsP
   return parsed;
 }
 
+// Один AI-вызов на один день — возвращает 3 готовых поста «Звёздного Компаса» (по одному на рубрику).
+async function generateHoroscopeDayPosts(dayIndex) {
+  const signsList = ZODIAC_SIGNS.join(', ');
+  const data = await callRouter('/chat/completions', {
+    model: HOROSCOPE_TEXT_MODEL,
+    max_tokens: 8192,
+    messages: [
+      {
+        role: 'system',
+        content: 'Ты — астролог, ведёшь Telegram-канал «Звёздный Компас». Отвечай СТРОГО валидным JSON-объектом, без markdown-разметки и пояснений.'
+      },
+      {
+        role: 'user',
+        content: `Составь контент для канала на день №${dayIndex + 1} вперёд от сегодня. Нужно 3 поста, каждый — отдельный объект в JSON:\n\n` +
+          `1. "general" — гороскоп на день сразу для ВСЕХ 12 знаков зодиака: ${signsList}. Для каждого знака — отдельная строка, начинающаяся РОВНО с эмодзи знака (как в списке выше), затем название жирным через Markdown и одно ёмкое предложение-прогноз (15-20 слов), без общих шаблонных фраз. В начале поста — короткий заголовок.\n\n` +
+          `2. "business" — деловой гороскоп, тот же формат (строка на каждый знак, начинается с эмодзи), но про работу, карьеру, деньги, деловые решения и переговоры.\n\n` +
+          `3. "love" — любовный гороскоп, тот же формат (строка на каждый знак, начинается с эмодзи), но про отношения и личную жизнь.\n\n` +
+          `Для каждого поста также дай "image_prompt" — подробный промпт на английском для мистической астрологической иллюстрации (созвездия, ночное небо, магический стиль), без текста и букв на изображении, единый визуальный стиль для всех трёх.\n\n` +
+          `Верни JSON вида: {"general": {"text": "...", "image_prompt": "..."}, "business": {"text": "...", "image_prompt": "..."}, "love": {"text": "...", "image_prompt": "..."}}`
+      }
+    ]
+  });
+  const raw = data.choices?.[0]?.message?.content || '{}';
+  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+// Для бота (кнопка «выбери знак») нужен НЕ обрывок строки из общего поста канала, а полноценный
+// отдельный гороскоп на каждый знак — по одному AI-вызову на день, 12 текстов сразу в JSON.
+async function generateIndividualDayHoroscopes(dayIndex) {
+  const data = await callRouter('/chat/completions', {
+    model: HOROSCOPE_TEXT_MODEL,
+    max_tokens: 8192,
+    messages: [
+      {
+        role: 'system',
+        content: 'Ты — астролог. Пишешь короткие персональные гороскопы на день для Telegram-бота «Звёздный Компас». Отвечай СТРОГО валидным JSON-объектом, без markdown-разметки и пояснений.'
+      },
+      {
+        role: 'user',
+        content: `Составь гороскоп на день №${dayIndex + 1} вперёд от сегодня для каждого из 12 знаков зодиака по отдельности: ` +
+          `${ZODIAC_SIGNS.join(', ')}. Для каждого знака — отдельный, самостоятельный текст (3-4 предложения): общий настрой дня, ` +
+          `на что обратить внимание, короткий совет. Позитивно, но реалистично, без общих шаблонных фраз, без markdown-разметки ` +
+          `внутри текста, без эмодзи в начале текста (эмодзи уже есть в названии знака, дублировать не нужно).\n\n` +
+          `Верни JSON вида: {"aries": "...", "taurus": "...", "gemini": "...", "cancer": "...", "leo": "...", "virgo": "...", ` +
+          `"libra": "...", "scorpio": "...", "sagittarius": "...", "capricorn": "...", "aquarius": "...", "pisces": "..."}`
+      }
+    ]
+  });
+  const raw = data.choices?.[0]?.message?.content || '{}';
+  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+async function handleHoroscopeIndividual(req, res) {
+  const { days = 1, dayOffset = 0 } = req.body || {};
+  if (days < 1 || days > 3) {
+    res.status(400).json({ error: 'days must be between 1 and 3 per request' });
+    return;
+  }
+
+  try {
+    const now = new Date();
+    let inserted = 0;
+
+    for (let i = 0; i < days; i++) {
+      const dayIndex = dayOffset + i;
+      const bySign = await generateIndividualDayHoroscopes(dayIndex);
+
+      const date = new Date(now);
+      date.setUTCDate(date.getUTCDate() + dayIndex + 1);
+      const dateStr = date.toISOString().slice(0, 10);
+
+      const rows = ZODIAC_KEYS
+        .filter((key) => bySign[key])
+        .map((key) => ({ sign_key: key, date: dateStr, text: bySign[key] }));
+
+      if (rows.length > 0) {
+        const { data, error } = await supabase
+          .from('zodiac_daily_horoscopes')
+          .upsert(rows, { onConflict: 'sign_key,date' })
+          .select('id');
+        if (error) throw new Error(error.message);
+        inserted += data?.length || 0;
+      }
+    }
+
+    res.status(200).json({ inserted, daysRequested: days, dayOffset });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// Публикация «Звёздного Компаса» автоматическая (status: 'scheduled' сразу), поэтому картинку —
+// в отличие от проектов с утверждением — генерируем здесь и сейчас, а не «на лету» перед отправкой
+// владельцу: для уже-запланированных постов такого отдельного шага больше нет.
+// Картинки — через Pollinations.ai (бесплатно, без ключа), а не через платный Router AI.
+async function generateAndUploadImage(idHint, prompt) {
+  const seed = Math.floor(Math.random() * 1_000_000);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&seed=${seed}&nologo=true`;
+  const imgRes = await fetch(url);
+  if (!imgRes.ok) throw new Error(`Pollinations вернул ошибку: ${imgRes.status}`);
+  const buffer = Buffer.from(await imgRes.arrayBuffer());
+
+  const path = `${idHint}/zvezdny-${Date.now()}.jpg`;
+  const { error: upErr } = await supabase.storage.from(MEDIA_BUCKET).upload(path, buffer, { contentType: 'image/jpeg' });
+  if (upErr) throw new Error(upErr.message);
+  const { data: pub } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
+  return pub.publicUrl;
+}
+
+async function handleHoroscope(req, res) {
+  const { days = 1, dayOffset = 0 } = req.body || {};
+  // Каждый день — 1 текстовый вызов + 3 генерации картинок — держим чанк небольшим, чтобы не
+  // упереться в лимит времени серверлесс-функции (300с). Промежуточная запись в базу (см. ниже)
+  // всё равно подстрахует от потери уже сделанной работы, но лучше не рисковать таймаутом почём зря.
+  if (days < 1 || days > 3) {
+    res.status(400).json({ error: 'days must be between 1 and 3 per request (chunk a month across ~10 calls)' });
+    return;
+  }
+
+  try {
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('name', HOROSCOPE_PROJECT_NAME)
+      .maybeSingle();
+    if (projectError) throw new Error(projectError.message);
+    if (!project) throw new Error(`Проект "${HOROSCOPE_PROJECT_NAME}" не найден в CRM`);
+
+    const now = new Date();
+    const imageErrors = [];
+    let inserted = 0;
+
+    for (let i = 0; i < days; i++) {
+      const dayIndex = dayOffset + i;
+      const posts = await generateHoroscopeDayPosts(dayIndex);
+      const dayRows = [];
+
+      for (const slot of HOROSCOPE_SLOTS_UTC) {
+        const post = posts[slot.key];
+        if (!post || !post.text) continue;
+
+        const scheduledAt = new Date(now);
+        scheduledAt.setUTCDate(scheduledAt.getUTCDate() + dayIndex + 1);
+        scheduledAt.setUTCHours(slot.h, slot.m, 0, 0);
+
+        let mediaUrl = null;
+        if (post.image_prompt) {
+          try {
+            mediaUrl = await generateAndUploadImage(`${project.id}-d${dayIndex}-${slot.key}`, post.image_prompt);
+          } catch (imgErr) {
+            imageErrors.push(`день ${dayIndex + 1} (${slot.key}): ${imgErr.message}`);
+          }
+        }
+
+        dayRows.push({
+          project_id: project.id,
+          platform: 'telegram',
+          topic: HOROSCOPE_TOPICS[slot.key],
+          body: post.text,
+          image_prompt: post.image_prompt || null,
+          media_url: mediaUrl,
+          status: 'scheduled',
+          scheduled_at: scheduledAt.toISOString()
+        });
+      }
+
+      // Пишем в базу сразу после каждого дня, а не всё разом в конце — если функция упрётся
+      // в лимит времени (300с) на 20-м из 30 дней, уже сгенерированные дни не потеряются.
+      if (dayRows.length > 0) {
+        const { data, error } = await supabase.from('content_items').insert(dayRows).select('id');
+        if (error) throw new Error(error.message);
+        inserted += data?.length || 0;
+      }
+    }
+
+    res.status(200).json({ inserted, daysRequested: days, dayOffset, imageErrors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// Докачка картинок для уже сгенерированных постов «Звёздного Компаса», у которых есть
+// image_prompt, но нет media_url (например, если раньше упёрлись в rate limit Pollinations).
+// Текст не трогаем и не платим за него — только бесплатная картинка + апдейт строки.
+async function handleHoroscopeImageBackfill(req, res) {
+  const { limit = 12, fromDate, toDate } = req.body || {};
+
+  try {
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('name', HOROSCOPE_PROJECT_NAME)
+      .maybeSingle();
+    if (projectError) throw new Error(projectError.message);
+    if (!project) throw new Error(`Проект "${HOROSCOPE_PROJECT_NAME}" не найден в CRM`);
+
+    let query = supabase
+      .from('content_items')
+      .select('id, scheduled_at, image_prompt')
+      .eq('project_id', project.id)
+      .is('media_url', null)
+      .not('image_prompt', 'is', null)
+      .order('scheduled_at', { ascending: true })
+      .limit(limit);
+    if (fromDate) query = query.gte('scheduled_at', fromDate);
+    if (toDate) query = query.lte('scheduled_at', toDate);
+
+    const { data: items, error } = await query;
+    if (error) throw new Error(error.message);
+
+    let filled = 0;
+    const errors = [];
+    for (const item of items || []) {
+      try {
+        const mediaUrl = await generateAndUploadImage(`${project.id}-backfill-${item.id}`, item.image_prompt);
+        const { error: updErr } = await supabase.from('content_items').update({ media_url: mediaUrl }).eq('id', item.id);
+        if (updErr) throw new Error(updErr.message);
+        filled++;
+      } catch (imgErr) {
+        errors.push(`${item.scheduled_at}: ${imgErr.message}`);
+      }
+    }
+
+    res.status(200).json({ filled, remaining_checked: (items || []).length, errors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  if (req.body?.horoscope && req.body?.backfillImages) {
+    await handleHoroscopeImageBackfill(req, res);
+    return;
+  }
+
+  if (req.body?.horoscope && req.body?.individual) {
+    await handleHoroscopeIndividual(req, res);
+    return;
+  }
+
+  if (req.body?.horoscope) {
+    await handleHoroscope(req, res);
     return;
   }
 
