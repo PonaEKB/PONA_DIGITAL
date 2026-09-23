@@ -1215,6 +1215,9 @@ async function generateDigitalMindDigest() {
       .limit(1);
     if (already && already.length > 0) { console.log('🤖 Дайджест «Цифровой Разум» на сегодня уже создан'); return; }
 
+    const { data: agent } = await supabase.from('agents').select('id').eq('name', 'Копирайтер').maybeSingle();
+    const agentId = agent?.id || null;
+
     console.log('🤖 Собираю свежие посты из', DIGITAL_MIND_CHANNELS.length, 'каналов про ИИ...');
     const collected = [];
     for (const ch of DIGITAL_MIND_CHANNELS) {
@@ -1233,7 +1236,7 @@ async function generateDigitalMindDigest() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
       body: JSON.stringify({
-        model: 'anthropic/claude-opus-5',
+        model: 'anthropic/claude-sonnet-5',
         max_tokens: 8192,
         messages: [
           { role: 'system', content: 'Ты — контент-редактор Telegram-канала про нейросети и технологии. Отвечай СТРОГО валидным JSON-массивом, без markdown и пояснений.' },
@@ -1256,6 +1259,7 @@ async function generateDigitalMindDigest() {
       if (scheduledAt <= now) scheduledAt.setUTCDate(scheduledAt.getUTCDate() + 1);
       return {
         project_id: project.id,
+        agent_id: agentId,
         platform: 'telegram',
         topic: `${DIGITAL_MIND_PROJECT_NAME} — ${p.rubric || 'Нейросеть дня'}`,
         body: p.text,
