@@ -1230,6 +1230,55 @@ async function fetchAbstractTechPhoto(query) {
   return (await pexelsPhoto(query)) || (await unsplashPhoto(query)) || null;
 }
 
+async function verifyLiveImage(url) {
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!res.ok) return false;
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.startsWith('image/')) return false;
+    const len = Number(res.headers.get('content-length') || 0);
+    // Отсекаем маленькие иконки/фавиконки og:image (обычно < 15КБ) — нужна полноценная обложка, не логотип
+    return len === 0 || len >= 15000;
+  } catch { return false; }
+}
+
+// Ищем официальный скриншот через реальный веб-поиск (Perplexity Sonar), но НИКОГДА не доверяем
+// прямой ссылке на картинку от модели — она часто выдумывает правдоподобный, но несуществующий
+// путь к файлу. Доверяем только найденной странице (с реальной цитатой), а картинку достаём сами
+// через og:image и обязательно проверяем, что она живая, прежде чем использовать.
+async function findOfficialScreenshot(searchQuery) {
+  try {
+    const res = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
+      body: JSON.stringify({
+        model: 'perplexity/sonar-pro',
+        messages: [{ role: 'user', content: `Find the single most relevant official page (official product/company site, blog post, or documentation — not a news aggregator) about: ${searchQuery}. Return ONLY a JSON object: {"page_url": "..."}` }]
+      })
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const citations = (data.choices?.[0]?.message?.annotations || []).map(a => a.url_citation?.url).filter(Boolean);
+    const raw = data.choices?.[0]?.message?.content || '';
+    const m = raw.match(/"page_url"\s*:\s*"([^"]+)"/);
+    const claimedUrl = m ? m[1] : null;
+    // доверяем странице только если она реально была в списке цитат (значит поиск её правда нашёл)
+    const pageUrl = claimedUrl && citations.includes(claimedUrl) ? claimedUrl : citations[0];
+    if (!pageUrl) return null;
+
+    const pageRes = await fetch(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!pageRes.ok) return null;
+    const html = await pageRes.text();
+    const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+    if (!ogMatch) return null;
+    const imageUrl = ogMatch[1];
+    return (await verifyLiveImage(imageUrl)) ? { imageUrl, pageUrl } : null;
+  } catch (e) {
+    console.log(`⚠️ findOfficialScreenshot ошибка: ${e.message}`);
+    return null;
+  }
+}
+
 let digitalMindInProgress = false;
 
 async function generateDigitalMindDigest() {
@@ -1266,7 +1315,7 @@ async function generateDigitalMindDigest() {
     const trimmed = collected.slice(0, 100);
     const digest = trimmed.map((item, i) => `[${i}]${item.photoUrl ? ' 📷' : ''} @${item.username}: ${item.text}`).join('\n\n---\n\n').slice(0, 40000);
 
-    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ, каждый с номером в квадратных скобках (📷 значит у поста есть картинка/скриншот):\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nДля каждого поста укажи поле "source_index" — номер поста из списка выше (в квадратных скобках), на котором ЭТОТ пост в основном базируется, ПРЕДПОЧТИТЕЛЬНО тот, что помечен 📷 (реальный скриншот всегда лучше сгенерированной картинки). Если пост синтезирован из нескольких источников без одного явного лидера — верни null.\n\nДобавь также поле "image_prompt" — подробный промпт на английском для генерации иллюстрации (используется только если у source_index нет своей картинки). Единый стиль НЕ обязателен — главное, чтобы изображение максимально точно передавало СМЫСЛ поста: если новость про робота — покажи робота, если про мозг — что-то анатомически похожее на мозг, если про экономику/цены — что-то про деньги/графики. Без текста, без букв, без логотипов компаний.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста", "source_index": 3, "image_prompt": "..."}, без markdown-обёртки и пояснений.`;
+    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ, каждый с номером в квадратных скобках (📷 значит у поста есть картинка/скриншот):\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nДля каждого поста укажи поле "source_index" — номер поста из списка выше (в квадратных скобках), на котором ЭТОТ пост в основном базируется, ПРЕДПОЧТИТЕЛЬНО тот, что помечен 📷 (реальный скриншот всегда лучше сгенерированной картинки). Если пост синтезирован из нескольких источников без одного явного лидера — верни null.\n\nДобавь поле "search_query" — короткий запрос на английском для поиска ОФИЦИАЛЬНОЙ страницы по теме поста (например "Claude Opus 5.5 official announcement Anthropic", "Qwen3.8-LiveTranslate official page Alibaba") — используется, если у source_index нет своей картинки, чтобы найти официальный скриншот/обложку.\n\nДобавь также поле "image_prompt" — подробный промпт на английском для генерации иллюстрации (последний фолбэк, если и официальную страницу найти не удалось). Единый стиль НЕ обязателен — главное, чтобы изображение максимально точно передавало СМЫСЛ поста: если новость про робота — покажи робота, если про мозг — что-то анатомически похожее на мозг, если про экономику/цены — что-то про деньги/графики. Без текста, без букв, без логотипов компаний.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста", "source_index": 3, "search_query": "...", "image_prompt": "..."}, без markdown-обёртки и пояснений.`;
 
     const response = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -1299,10 +1348,18 @@ async function generateDigitalMindDigest() {
 
       let photo = null;
       let sourceUsername = null;
+      let sourcePageUrl = null;
       const src = (typeof p.source_index === 'number') ? trimmed[p.source_index] : null;
       if (src && src.photoUrl && !usedPhotoUrls.has(src.photoUrl)) {
         photo = src.photoUrl;
         sourceUsername = src.username;
+      }
+      if (!photo && p.search_query) {
+        const found = await findOfficialScreenshot(p.search_query);
+        if (found && !usedPhotoUrls.has(found.imageUrl)) {
+          photo = found.imageUrl;
+          sourcePageUrl = found.pageUrl;
+        }
       }
       if (!photo && p.image_prompt) {
         try {
@@ -1315,7 +1372,9 @@ async function generateDigitalMindDigest() {
       if (photo && usedPhotoUrls.has(photo)) photo = await fetchAbstractTechPhoto('artificial intelligence abstract digital');
       if (photo) usedPhotoUrls.add(photo);
 
-      const body = sourceUsername ? `${p.text}\n\n📸 Источник: @${sourceUsername}` : p.text;
+      let body = p.text;
+      if (sourceUsername) body += `\n\n📸 Источник: @${sourceUsername}`;
+      else if (sourcePageUrl) body += `\n\n📸 Источник: <a href="${sourcePageUrl}">официальная страница</a>`;
 
       rows.push({
         project_id: project.id,
