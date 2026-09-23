@@ -1156,6 +1156,131 @@ function startBot() {
 startBot();
 console.log('🤖 Бот PONA DIGITAL + Claude запущен!');
 
+// ===== Ежедневный дайджест «Цифровой Разум»: мониторинг Telegram-каналов про ИИ =====
+
+const DIGITAL_MIND_PROJECT_NAME = 'Цифровой Разум';
+const DIGITAL_MIND_DIGEST_UTC_HOUR = 3; // 06:00 МСК — за 2.5 часа до первого слота публикации (08:30 МСК)
+// Слоты публикации — 08:30 / 12:35 / 19:30 / 21:30 МСК (UTC+3), совпадают с api/generate-content.js
+const POST_SLOTS_UTC = [{ h: 5, m: 30 }, { h: 9, m: 35 }, { h: 16, m: 30 }, { h: 18, m: 30 }];
+const DIGITAL_MIND_CHANNELS = [
+  'gptpublic', 'hiaimedia', 'ai_newz', 'TochkiNadAI', 'misha_davai_po_novoi',
+  'Castalia_Ai', 'NeuralShit', 'gpt_news', 'neuralpony', 'neuraldvig',
+  'neural_braining', 'notboring_tech', 'nsekt', 'n_nagornova', 'incubeai_pro'
+];
+
+function stripTelegramHtml(raw) {
+  return raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&#0?36;/g, '$')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .trim();
+}
+
+async function fetchChannelPosts(username, limit = 5) {
+  try {
+    const res = await fetch(`https://t.me/s/${username}`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const matches = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?:<div class="tgme_widget_message_meta|<\/div>\s*<\/div>)/g)];
+    return matches
+      .slice(-limit)
+      .map(m => stripTelegramHtml(m[1]))
+      .filter(t => t.length > 40);
+  } catch (e) {
+    console.log(`⚠️ Не удалось получить посты из @${username}: ${e.message}`);
+    return [];
+  }
+}
+
+let digitalMindInProgress = false;
+
+async function generateDigitalMindDigest() {
+  if (digitalMindInProgress) return;
+  digitalMindInProgress = true;
+  try {
+    const { data: project } = await supabase.from('projects').select('id').eq('name', DIGITAL_MIND_PROJECT_NAME).maybeSingle();
+    if (!project) { console.log('⚠️ Проект «Цифровой Разум» не найден, пропуск дайджеста'); return; }
+
+    // Идемпотентность: не генерируем повторно, если сегодня уже был дайджест
+    const todayStartUTC = new Date();
+    todayStartUTC.setUTCHours(0, 0, 0, 0);
+    const { data: already } = await supabase
+      .from('content_items')
+      .select('id')
+      .eq('project_id', project.id)
+      .gte('created_at', todayStartUTC.toISOString())
+      .limit(1);
+    if (already && already.length > 0) { console.log('🤖 Дайджест «Цифровой Разум» на сегодня уже создан'); return; }
+
+    console.log('🤖 Собираю свежие посты из', DIGITAL_MIND_CHANNELS.length, 'каналов про ИИ...');
+    const collected = [];
+    for (const ch of DIGITAL_MIND_CHANNELS) {
+      const posts = await fetchChannelPosts(ch, 5);
+      posts.forEach(p => collected.push(`[@${ch}]: ${p}`));
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    if (collected.length === 0) { console.log('⚠️ Не удалось собрать ни одного поста, пропуск дайджеста'); return; }
+
+    const digest = collected.slice(0, 100).join('\n\n---\n\n').slice(0, 40000);
+
+    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ:\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста"}, без markdown-обёртки и пояснений.`;
+
+    const response = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ROUTER_KEY}` },
+      body: JSON.stringify({
+        model: 'anthropic/claude-opus-5',
+        max_tokens: 8192,
+        messages: [
+          { role: 'system', content: 'Ты — контент-редактор Telegram-канала про нейросети и технологии. Отвечай СТРОГО валидным JSON-массивом, без markdown и пояснений.' },
+          { role: 'user', content: prompt }
+        ]
+      })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || JSON.stringify(data));
+    const raw = data.choices?.[0]?.message?.content || '[]';
+    const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const posts = JSON.parse(cleaned);
+    if (!Array.isArray(posts) || posts.length === 0) throw new Error('AI вернул не массив постов');
+
+    const now = new Date();
+    const rows = posts.map((p, idx) => {
+      const slot = POST_SLOTS_UTC[idx % POST_SLOTS_UTC.length];
+      const scheduledAt = new Date(now);
+      scheduledAt.setUTCHours(slot.h, slot.m, 0, 0);
+      if (scheduledAt <= now) scheduledAt.setUTCDate(scheduledAt.getUTCDate() + 1);
+      return {
+        project_id: project.id,
+        platform: 'telegram',
+        topic: `${DIGITAL_MIND_PROJECT_NAME} — ${p.rubric || 'Нейросеть дня'}`,
+        body: p.text,
+        status: 'draft',
+        scheduled_at: scheduledAt.toISOString()
+      };
+    });
+
+    const { error: insErr } = await supabase.from('content_items').insert(rows);
+    if (insErr) throw new Error(insErr.message);
+    console.log(`✅ Дайджест «Цифровой Разум» создан: ${rows.length} постов на основе ${collected.length} новостей`);
+  } catch (e) {
+    console.log(`⚠️ Ошибка генерации дайджеста «Цифровой Разум»: ${e.message}`);
+  } finally {
+    digitalMindInProgress = false;
+  }
+}
+
+function scheduleDigitalMindDigest() {
+  setTimeout(async () => {
+    await generateDigitalMindDigest();
+    scheduleDigitalMindDigest();
+  }, msUntilNextUtcHour(DIGITAL_MIND_DIGEST_UTC_HOUR));
+}
+
 // ===== Отдельный публичный бот «Звёздный Компас»: гороскоп по знаку зодиака по запросу =====
 
 const HOROSCOPE_BOT_TOKEN = process.env.HOROSCOPE_BOT_TOKEN;
@@ -1282,6 +1407,10 @@ if (OWNER_CHAT_ID) {
 
   scheduleZvezdnyKompasBatch();
   console.log('🔮 Пачка «Звёздный Компас» на утверждение включена (раз в сутки, в 23:00 МСК, 3 поста)');
+
+  generateDigitalMindDigest();
+  scheduleDigitalMindDigest();
+  console.log('🤖 Ежедневный дайджест «Цифровой Разум» включён (06:00 МСК, мониторинг 15 AI-каналов)');
 } else {
   console.log('⚠️ OWNER_CHAT_ID не задан — черновики не будут приходить на утверждение в личку');
 }
