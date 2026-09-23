@@ -2,8 +2,17 @@ import { createClient } from '@supabase/supabase-js';
 
 const ROUTER_BASE_URL = process.env.ROUTER_AI_BASE_URL;
 const ROUTER_KEY = process.env.ROUTER_AI_KEY;
-const TEXT_MODEL = 'anthropic/claude-opus-5';
+// Весь контент здесь — рутинная массовая генерация (посты каналов, гороскопы), а не стратегия/идеи,
+// поэтому агент «Копирайтер» на Sonnet — дешевле Opus в 2.5 раза, разница в качестве для такого
+// формата текста незаметна. «Стратег» (Opus) — для идей проектов и AI-чата, сюда не относится.
+const TEXT_MODEL = 'anthropic/claude-sonnet-5';
 const MEDIA_BUCKET = 'content-media';
+const COPYWRITER_AGENT_NAME = 'Копирайтер';
+
+async function getCopywriterAgentId() {
+  const { data } = await supabase.from('agents').select('id').eq('name', COPYWRITER_AGENT_NAME).maybeSingle();
+  return data?.id || null;
+}
 // Слоты публикации — 08:30 / 12:35 / 19:30 / 21:30 МСК (UTC+3), пересчитано в UTC.
 const POST_SLOTS_UTC = [
   { h: 5, m: 30 },
@@ -15,9 +24,6 @@ const POST_SLOTS_UTC = [
 // «Звёздный Компас» — отдельная ветка ниже (handleHoroscope): свои рубрики/слоты и
 // автопубликация без утверждения, вместо общей generatePostsText/POST_SLOTS_UTC логики.
 const HOROSCOPE_PROJECT_NAME = 'Звёздный Компас';
-// Дешевле Opus в 2.5 раза, для формульного текста гороскопов разница в качестве незаметна —
-// владелец попросил не жечь бюджет Router AI на самую дорогую модель ради этого контента.
-const HOROSCOPE_TEXT_MODEL = 'anthropic/claude-sonnet-5';
 const HOROSCOPE_SLOTS_UTC = [
   { h: 5, m: 30, key: 'general' },   // 08:30 МСК — общий гороскоп на все знаки
   { h: 9, m: 30, key: 'business' },  // 12:30 МСК — деловой гороскоп
@@ -97,7 +103,7 @@ async function generatePostsText({ projectId, projectName, context, days, postsP
 async function generateHoroscopeDayPosts(dayIndex) {
   const signsList = ZODIAC_SIGNS.join(', ');
   const data = await callRouter('/chat/completions', {
-    model: HOROSCOPE_TEXT_MODEL,
+    model: TEXT_MODEL,
     max_tokens: 8192,
     messages: [
       {
@@ -124,7 +130,7 @@ async function generateHoroscopeDayPosts(dayIndex) {
 // отдельный гороскоп на каждый знак — по одному AI-вызову на день, 12 текстов сразу в JSON.
 async function generateIndividualDayHoroscopes(dayIndex) {
   const data = await callRouter('/chat/completions', {
-    model: HOROSCOPE_TEXT_MODEL,
+    model: TEXT_MODEL,
     max_tokens: 8192,
     messages: [
       {
@@ -223,6 +229,7 @@ async function handleHoroscope(req, res) {
     if (projectError) throw new Error(projectError.message);
     if (!project) throw new Error(`Проект "${HOROSCOPE_PROJECT_NAME}" не найден в CRM`);
 
+    const agentId = await getCopywriterAgentId();
     const now = new Date();
     const imageErrors = [];
     let inserted = 0;
@@ -251,6 +258,7 @@ async function handleHoroscope(req, res) {
 
         dayRows.push({
           project_id: project.id,
+          agent_id: agentId,
           platform: 'telegram',
           topic: HOROSCOPE_TOPICS[slot.key],
           body: post.text,
@@ -356,6 +364,7 @@ export default async function handler(req, res) {
     // не здесь, а в bot.cjs — прямо перед отправкой поста владельцу на
     // утверждение (и только для ближайшей пачки, а не для всех разом).
     const posts = await generatePostsText({ projectId, projectName, context: context || '', days, postsPerDay });
+    const agentId = await getCopywriterAgentId();
 
     const grouped = {};
     for (const post of posts) {
@@ -374,6 +383,7 @@ export default async function handler(req, res) {
         scheduledAt.setUTCHours(slot.h, slot.m, 0, 0);
         rows.push({
           project_id: projectId,
+          agent_id: agentId,
           platform: 'telegram',
           topic: projectName,
           body: post.text,

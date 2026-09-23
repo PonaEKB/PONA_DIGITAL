@@ -112,6 +112,7 @@ function renderTelegramHtml(text) {
 
 function App() {
   const [projects, setProjects] = useState([]);
+  const [agents, setAgents] = useState([]);
   const [allTasks, setAllTasks] = useState([]);
   const [finances, setFinances] = useState([]);
   const [financeTab, setFinanceTab] = useState('expenses');
@@ -210,11 +211,13 @@ function App() {
     const { data: financesData } = await supabase.from('finances').select('*').order('date', { ascending: false });
     const { count: draftCount } = await supabase.from('content_items').select('id', { count: 'exact', head: true }).eq('status', 'draft');
     const { data: remindersData } = await supabase.from('reminders').select('*').order('remind_at', { ascending: true });
+    const { data: agentsData } = await supabase.from('agents').select('*');
     setProjects(projectsData || []);
     setAllTasks(tasksData || []);
     setFinances(financesData || []);
     setPendingApprovalCount(draftCount || 0);
     setReminders(remindersData || []);
+    setAgents(agentsData || []);
     return projectsData || [];
   }
 
@@ -1677,9 +1680,11 @@ function App() {
                       )}
                       {projectContent.filter(c => (contentFilter === 'all' || c.platform === contentFilter) && matchesContentSearch(c, contentSearch)).map((item) => {
                         const platform = getPlatformInfo(item.platform);
+                        const agent = agents.find(a => a.id === item.agent_id);
                         return (
                           <div key={item.id} className="content-item">
                             <span className="content-platform">{platform.icon} {platform.label}{!platform.live && <span className="content-platform-badge">черновик до API</span>}</span>
+                            {agent && <span className="content-platform-badge" title={agent.description || ''}>🤖 {agent.name}</span>}
                             {item.media_url && item.media_type === 'audio' ? (
                               <audio controls src={item.media_url} style={{ height: 32 }} />
                             ) : (item.media_urls?.[0] || item.media_url) && (
@@ -1799,9 +1804,11 @@ function App() {
                         .sort((a, b) => new Date(a.scheduled_at || a.created_at) - new Date(b.scheduled_at || b.created_at))
                         .map((item) => {
                           const platform = getPlatformInfo(item.platform);
+                          const agent = agents.find(a => a.id === item.agent_id);
                           return (
                             <div key={item.id} className="content-item">
                               <span className="content-platform">{platform.icon} {platform.label}</span>
+                              {agent && <span className="content-platform-badge" title={agent.description || ''}>🤖 {agent.name}</span>}
                               <div className="content-body">
                                 <span className="content-title">{item.title}</span>
                                 <span className="content-text">
