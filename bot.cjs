@@ -1256,7 +1256,7 @@ async function generateDigitalMindDigest() {
 
     const digest = collected.slice(0, 100).join('\n\n---\n\n').slice(0, 40000);
 
-    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ:\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nДля каждого поста добавь ещё поле "image_query" — короткий запрос на английском (3-5 слов) для поиска АБСТРАКТНОЙ тематической фотографии на Pexels/Unsplash (без текста и логотипов), которая передаёт настроение темы: например "neural network glowing abstract", "robot arm technology closeup", "computer chip circuit macro", "programmer coding screen dark". НЕ пытайся подобрать фото конкретной компании/продукта — только общую техно-эстетику по смыслу.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста", "image_query": "..."}, без markdown-обёртки и пояснений.`;
+    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ:\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nДля каждого поста добавь ещё поле "image_prompt" — подробный промпт на английском для генерации АБСТРАКТНОЙ иллюстрации в едином фирменном стиле канала: светящаяся нейросеть/узлы связей, градиент от синего к фиолетовому, тёмный фон, кинематографичное свечение, цифровые частицы, без текста, без букв, без логотипов конкретных компаний. Промпт должен отражать смысл темы (например для новости про новую модель — "glowing neural network nodes forming", для факта про мозг — "glowing brain-like network structure", для лайфхака про автоматизацию — "glowing interconnected gears and network nodes"), но оставаться в этой единой абстрактной визуальной стилистике, не буквальным изображением конкретного продукта.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста", "image_prompt": "..."}, без markdown-обёртки и пояснений.`;
 
     const response = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -1287,8 +1287,16 @@ async function generateDigitalMindDigest() {
       scheduledAt.setUTCHours(slot.h, slot.m, 0, 0);
       if (scheduledAt <= now) scheduledAt.setUTCDate(scheduledAt.getUTCDate() + 1);
 
-      let photo = p.image_query ? await fetchAbstractTechPhoto(p.image_query) : null;
-      if (photo && usedPhotoUrls.has(photo)) photo = await fetchAbstractTechPhoto('artificial intelligence abstract technology');
+      let photo = null;
+      if (p.image_prompt) {
+        try {
+          photo = await generateAndUploadImage(`digitalmind-${Date.now()}-${idx}`, p.image_prompt);
+        } catch (genErr) {
+          console.log(`⚠️ Генерация фото не удалась для «${p.rubric}», фолбэк на Pexels/Unsplash: ${genErr.message}`);
+        }
+      }
+      if (!photo) photo = await fetchAbstractTechPhoto('neural network glowing abstract technology');
+      if (photo && usedPhotoUrls.has(photo)) photo = await fetchAbstractTechPhoto('artificial intelligence abstract digital');
       if (photo) usedPhotoUrls.add(photo);
 
       rows.push({
