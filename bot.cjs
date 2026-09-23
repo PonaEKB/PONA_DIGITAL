@@ -1184,11 +1184,20 @@ async function fetchChannelPosts(username, limit = 5) {
     const res = await fetch(`https://t.me/s/${username}`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!res.ok) return [];
     const html = await res.text();
-    const matches = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?:<div class="tgme_widget_message_meta|<\/div>\s*<\/div>)/g)];
-    return matches
-      .slice(-limit)
-      .map(m => stripTelegramHtml(m[1]))
-      .filter(t => t.length > 40);
+    // Каждое сообщение — отдельный <div class="tgme_widget_message ..." data-post="channel/id">,
+    // разбиваем по этой границе, чтобы точно связать текст и фото ОДНОГО поста, а не всей страницы разом.
+    const chunks = html.split('<div class="tgme_widget_message ');
+    const results = [];
+    for (let i = 1; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const textMatch = chunk.match(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?:<div class="tgme_widget_message_meta|<\/div>\s*<\/div>)/);
+      if (!textMatch) continue;
+      const text = stripTelegramHtml(textMatch[1]);
+      if (text.length < 40) continue;
+      const photoMatch = chunk.match(/tgme_widget_message_photo_wrap[^"]*"[^>]*style="[^"]*background-image:url\('([^']+)'\)/);
+      results.push({ username, text, photoUrl: photoMatch ? photoMatch[1] : null });
+    }
+    return results.slice(-limit);
   } catch (e) {
     console.log(`⚠️ Не удалось получить посты из @${username}: ${e.message}`);
     return [];
@@ -1248,15 +1257,16 @@ async function generateDigitalMindDigest() {
     const collected = [];
     for (const ch of DIGITAL_MIND_CHANNELS) {
       const posts = await fetchChannelPosts(ch, 5);
-      posts.forEach(p => collected.push(`[@${ch}]: ${p}`));
+      collected.push(...posts);
       await new Promise(r => setTimeout(r, 300));
     }
 
     if (collected.length === 0) { console.log('⚠️ Не удалось собрать ни одного поста, пропуск дайджеста'); return; }
 
-    const digest = collected.slice(0, 100).join('\n\n---\n\n').slice(0, 40000);
+    const trimmed = collected.slice(0, 100);
+    const digest = trimmed.map((item, i) => `[${i}]${item.photoUrl ? ' 📷' : ''} @${item.username}: ${item.text}`).join('\n\n---\n\n').slice(0, 40000);
 
-    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ:\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nДля каждого поста добавь ещё поле "image_prompt" — подробный промпт на английском для генерации иллюстрации к посту. Единый стиль НЕ обязателен — главное, чтобы изображение максимально точно передавало СМЫСЛ конкретного поста: если новость про робота — покажи робота, если про мозг — что-то анатомически похожее на мозг, если про экономику/цены — что-то про деньги/графики, если про конкретный инструмент — сцену его применения. Без текста, без букв, без логотипов конкретных компаний (сам объект/концепцию показывать можно и нужно). Тёмный фон и лёгкое цифровое свечение уместны как общая эстетика, но не в ущерб точности передачи темы.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста", "image_prompt": "..."}, без markdown-обёртки и пояснений.`;
+    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ, каждый с номером в квадратных скобках (📷 значит у поста есть картинка/скриншот):\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nДля каждого поста укажи поле "source_index" — номер поста из списка выше (в квадратных скобках), на котором ЭТОТ пост в основном базируется, ПРЕДПОЧТИТЕЛЬНО тот, что помечен 📷 (реальный скриншот всегда лучше сгенерированной картинки). Если пост синтезирован из нескольких источников без одного явного лидера — верни null.\n\nДобавь также поле "image_prompt" — подробный промпт на английском для генерации иллюстрации (используется только если у source_index нет своей картинки). Единый стиль НЕ обязателен — главное, чтобы изображение максимально точно передавало СМЫСЛ поста: если новость про робота — покажи робота, если про мозг — что-то анатомически похожее на мозг, если про экономику/цены — что-то про деньги/графики. Без текста, без букв, без логотипов компаний.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста", "source_index": 3, "image_prompt": "..."}, без markdown-обёртки и пояснений.`;
 
     const response = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -1288,7 +1298,13 @@ async function generateDigitalMindDigest() {
       if (scheduledAt <= now) scheduledAt.setUTCDate(scheduledAt.getUTCDate() + 1);
 
       let photo = null;
-      if (p.image_prompt) {
+      let sourceUsername = null;
+      const src = (typeof p.source_index === 'number') ? trimmed[p.source_index] : null;
+      if (src && src.photoUrl && !usedPhotoUrls.has(src.photoUrl)) {
+        photo = src.photoUrl;
+        sourceUsername = src.username;
+      }
+      if (!photo && p.image_prompt) {
         try {
           photo = await generateAndUploadImage(`digitalmind-${Date.now()}-${idx}`, p.image_prompt);
         } catch (genErr) {
@@ -1299,12 +1315,14 @@ async function generateDigitalMindDigest() {
       if (photo && usedPhotoUrls.has(photo)) photo = await fetchAbstractTechPhoto('artificial intelligence abstract digital');
       if (photo) usedPhotoUrls.add(photo);
 
+      const body = sourceUsername ? `${p.text}\n\n📸 Источник: @${sourceUsername}` : p.text;
+
       rows.push({
         project_id: project.id,
         agent_id: agentId,
         platform: 'telegram',
         topic: `${DIGITAL_MIND_PROJECT_NAME} — ${p.rubric || 'Нейросеть дня'}`,
-        body: p.text,
+        body,
         media_urls: photo ? [photo] : null,
         status: 'draft',
         scheduled_at: scheduledAt.toISOString()
