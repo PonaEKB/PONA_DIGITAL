@@ -1195,6 +1195,32 @@ async function fetchChannelPosts(username, limit = 5) {
   }
 }
 
+const PEXELS_KEY = process.env.PEXELS_API_KEY;
+const UNSPLASH_KEY = process.env.UNSPLASH_ACCESS_KEY;
+
+async function pexelsPhoto(query) {
+  if (!PEXELS_KEY) return null;
+  try {
+    const r = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=5&orientation=landscape`, { headers: { Authorization: PEXELS_KEY } });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const p = d.photos?.[0];
+    return p ? `https://images.pexels.com/photos/${p.id}/pexels-photo-${p.id}.jpeg?auto=compress&cs=tinysrgb&h=650&w=940` : null;
+  } catch { return null; }
+}
+async function unsplashPhoto(query) {
+  if (!UNSPLASH_KEY) return null;
+  try {
+    const r = await fetch(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=5&orientation=landscape`, { headers: { Authorization: 'Client-ID ' + UNSPLASH_KEY } });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.results?.[0]?.urls?.regular || null;
+  } catch { return null; }
+}
+async function fetchAbstractTechPhoto(query) {
+  return (await pexelsPhoto(query)) || (await unsplashPhoto(query)) || null;
+}
+
 let digitalMindInProgress = false;
 
 async function generateDigitalMindDigest() {
@@ -1230,7 +1256,7 @@ async function generateDigitalMindDigest() {
 
     const digest = collected.slice(0, 100).join('\n\n---\n\n').slice(0, 40000);
 
-    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ:\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста"}, без markdown-обёртки и пояснений.`;
+    const prompt = `Вот свежие посты из ${DIGITAL_MIND_CHANNELS.length} Telegram-каналов про нейросети и ИИ:\n\n${digest}\n\nНа основе ЭТОЙ реальной информации напиши 4 поста для Telegram-канала "Цифровой Разум" на сегодня, по одному на каждую рубрику:\n1. "Нейросеть дня" — про конкретный инструмент/модель/релиз из новостей: что нового, чем полезен, как попробовать.\n2. "Факт о технологиях" — удивительный факт или открытие из новостей.\n3. "Лайфхак с ИИ" — практический совет, как использовать что-то из этих новостей в жизни или работе.\n4. "Мысль дня" — короткая мысль о том, куда движутся технологии, на основе трендов из новостей.\n\nПиши живо, с HTML-разметкой Telegram (<b>, <i>, <u> — используй по смыслу, не в каждом предложении), эмодзи к месту, реальными деталями из новостей (названия моделей, цифры, конкретные факты). НЕ выдумывай ничего, чего нет в источниках — если для какой-то рубрики мало материала, бери самое интересное, что есть. Разбивай текст на короткие абзацы пустой строкой.\n\nДля каждого поста добавь ещё поле "image_query" — короткий запрос на английском (3-5 слов) для поиска АБСТРАКТНОЙ тематической фотографии на Pexels/Unsplash (без текста и логотипов), которая передаёт настроение темы: например "neural network glowing abstract", "robot arm technology closeup", "computer chip circuit macro", "programmer coding screen dark". НЕ пытайся подобрать фото конкретной компании/продукта — только общую техно-эстетику по смыслу.\n\nВерни СТРОГО валидный JSON-массив из 4 объектов вида {"rubric": "Нейросеть дня", "text": "готовый текст поста", "image_query": "..."}, без markdown-обёртки и пояснений.`;
 
     const response = await fetch(`${ROUTER_BASE_URL}/chat/completions`, {
       method: 'POST',
@@ -1252,21 +1278,30 @@ async function generateDigitalMindDigest() {
     if (!Array.isArray(posts) || posts.length === 0) throw new Error('AI вернул не массив постов');
 
     const now = new Date();
-    const rows = posts.map((p, idx) => {
+    const usedPhotoUrls = new Set();
+    const rows = [];
+    for (let idx = 0; idx < posts.length; idx++) {
+      const p = posts[idx];
       const slot = POST_SLOTS_UTC[idx % POST_SLOTS_UTC.length];
       const scheduledAt = new Date(now);
       scheduledAt.setUTCHours(slot.h, slot.m, 0, 0);
       if (scheduledAt <= now) scheduledAt.setUTCDate(scheduledAt.getUTCDate() + 1);
-      return {
+
+      let photo = p.image_query ? await fetchAbstractTechPhoto(p.image_query) : null;
+      if (photo && usedPhotoUrls.has(photo)) photo = await fetchAbstractTechPhoto('artificial intelligence abstract technology');
+      if (photo) usedPhotoUrls.add(photo);
+
+      rows.push({
         project_id: project.id,
         agent_id: agentId,
         platform: 'telegram',
         topic: `${DIGITAL_MIND_PROJECT_NAME} — ${p.rubric || 'Нейросеть дня'}`,
         body: p.text,
+        media_urls: photo ? [photo] : null,
         status: 'draft',
         scheduled_at: scheduledAt.toISOString()
-      };
-    });
+      });
+    }
 
     const { error: insErr } = await supabase.from('content_items').insert(rows);
     if (insErr) throw new Error(insErr.message);
