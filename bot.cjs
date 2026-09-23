@@ -1134,31 +1134,28 @@ if (HOROSCOPE_BOT_TOKEN) {
     if (!sign) return;
 
     try {
-      const todayStr = new Date().toISOString().slice(0, 10);
-      const rangeEndStr = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      // "Сегодня" по московскому времени (00:00 МСК), не по UTC — иначе смена дня съезжала бы на 3 часа.
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' });
 
       // Индивидуальный гороскоп на знак — отдельная таблица (не парсим строку из поста канала).
-      const { data: entries } = await supabase
+      // Только сегодняшний день, не всю пачку вперёд.
+      const { data: entry } = await supabase
         .from('zodiac_daily_horoscopes')
         .select('date, text')
         .eq('sign_key', sign.key)
-        .gte('date', todayStr)
-        .lt('date', rangeEndStr)
-        .order('date', { ascending: true });
+        .eq('date', todayStr)
+        .maybeSingle();
 
-      if (!entries || entries.length === 0) {
-        await ctx.reply('Гороскоп на ближайшие дни ещё не готов, загляните чуть позже 🔮');
+      if (!entry) {
+        await ctx.reply('Гороскоп на сегодня ещё не готов, загляните чуть позже 🔮');
         return;
       }
 
-      const blocks = entries.map((entry) => {
-        const dateLabel = new Date(entry.date).toLocaleDateString('ru-RU', {
-          day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow'
-        });
-        return `📅 ${dateLabel}\n${entry.text}`;
+      const dateLabel = new Date(entry.date).toLocaleDateString('ru-RU', {
+        day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow'
       });
 
-      await ctx.reply(`${sign.label} — прогноз на ${blocks.length} дн.\n\n${blocks.join('\n\n')}`, {
+      await ctx.reply(`${sign.label} — гороскоп на ${dateLabel}\n\n${entry.text}`, {
         reply_markup: zodiacKeyboard()
       });
     } catch (err) {
