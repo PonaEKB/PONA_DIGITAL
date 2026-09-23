@@ -65,6 +65,7 @@ const MENU_LABELS = {
   tasks: '✅ Задачи',
   content: '🎨 На утверждение',
   finance: '💰 Финансы',
+  advertisers: '🤝 Реклама',
   ai: '🤖 Спросить AI'
 };
 
@@ -72,7 +73,8 @@ function mainReplyKeyboard() {
   return Markup.keyboard([
     [MENU_LABELS.stats, MENU_LABELS.projects],
     [MENU_LABELS.tasks, MENU_LABELS.content],
-    [MENU_LABELS.finance, MENU_LABELS.ai]
+    [MENU_LABELS.finance, MENU_LABELS.advertisers],
+    [MENU_LABELS.ai]
   ]).resize();
 }
 
@@ -172,6 +174,17 @@ async function showFinance(ctx) {
   await ctx.reply(`💰 Финансы:\n\nДоходы: ${s.income}₽\nРасходы: ${s.expense}₽\nБаланс: ${s.balance}₽`);
 }
 
+const ADVERTISER_STATUS_EMOJI = {
+  new: '🆕', pitch_drafted: '✍️', contacted: '📨', negotiating: '🤝', deal: '✅', rejected: '❌'
+};
+
+async function showAdvertisers(ctx) {
+  const list = await execReadTool('list_advertisers', {});
+  if (!list.length) return ctx.reply('🤝 Пока нет рекламодателей в воронке. Напишите мне, например: «найди рекламодателей для Вкусной географии».');
+  const text = list.map(a => `${ADVERTISER_STATUS_EMOJI[a.status] || '•'} ${a.name}${a.niche ? ` (${a.niche})` : ''} — ${a.status}`).join('\n');
+  await ctx.reply(`🤝 Рекламодатели:\n\n${text}`);
+}
+
 bot.command('myid', (ctx) => ctx.reply(`Ваш chat_id: ${ctx.chat.id}`));
 
 bot.command('ai', async (ctx) => {
@@ -221,10 +234,14 @@ const TOOLS = [
   { type: 'function', function: { name: 'get_weather', description: 'Текущая погода в городе. Если пользователь не назвал город — используй Москву.', parameters: { type: 'object', properties: { city: { type: 'string', description: 'Город, например Moscow' } }, required: [] } } },
   { type: 'function', function: { name: 'get_currency_rate', description: 'Официальный курс валюты к рублю (ЦБ РФ) — доллар, евро и др.', parameters: { type: 'object', properties: { currency_code: { type: 'string', description: 'Код валюты, например USD, EUR, CNY' } }, required: ['currency_code'] } } },
   { type: 'function', function: { name: 'web_search', description: 'Поиск актуальной информации в интернете по ЛЮБОЙ теме, не связанной с CRM/погодой/курсами валют — факты, новости, «сколько», «кто», «из чего», любые общие вопросы. Используй это вместо догадок, если не уверен в ответе.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Поисковый запрос' } }, required: ['query'] } } },
-  { type: 'function', function: { name: 'get_tgstat_stats', description: 'Внешняя аналитика Telegram-канала от сервиса TGStat: число подписчиков по их данным, индекс цитируемости и охват (только для канала, привязанного к TGStat-аккаунту владельца, бесплатный тариф).', parameters: { type: 'object', properties: { channel: { type: 'string', description: 'Username канала, например @VkusnoZnatI' } }, required: [] } } }
+  { type: 'function', function: { name: 'get_tgstat_stats', description: 'Внешняя аналитика Telegram-канала от сервиса TGStat: число подписчиков по их данным, индекс цитируемости и охват (только для канала, привязанного к TGStat-аккаунту владельца, бесплатный тариф).', parameters: { type: 'object', properties: { channel: { type: 'string', description: 'Username канала, например @VkusnoZnatI' } }, required: [] } } },
+  { type: 'function', function: { name: 'list_advertisers', description: 'Список потенциальных рекламодателей проекта, опционально по статусу воронки', parameters: { type: 'object', properties: { project_name: { type: 'string' }, status: { type: 'string', enum: ['new', 'pitch_drafted', 'contacted', 'negotiating', 'deal', 'rejected'] } }, required: [] } } },
+  { type: 'function', function: { name: 'add_advertiser', description: 'Добавить нового кандидата в рекламодатели проекта (требует подтверждения)', parameters: { type: 'object', properties: { project_name: { type: 'string' }, name: { type: 'string' }, niche: { type: 'string' }, contact_info: { type: 'string' }, website: { type: 'string' }, relevance_score: { type: 'number', description: '1-5, насколько бренд подходит тематике канала' }, priority: { type: 'string', enum: ['high', 'medium', 'low'] }, source: { type: 'string' }, notes: { type: 'string' } }, required: ['project_name', 'name'] } } },
+  { type: 'function', function: { name: 'draft_advertiser_pitch', description: 'Сгенерировать питч-сообщение для конкретного рекламодателя и сохранить в его карточку (требует подтверждения)', parameters: { type: 'object', properties: { advertiser_name: { type: 'string' } }, required: ['advertiser_name'] } } },
+  { type: 'function', function: { name: 'update_advertiser_status', description: 'Изменить статус рекламодателя в воронке, например после ответа или сделки (требует подтверждения)', parameters: { type: 'object', properties: { advertiser_name: { type: 'string' }, status: { type: 'string', enum: ['new', 'pitch_drafted', 'contacted', 'negotiating', 'deal', 'rejected'] }, notes: { type: 'string' } }, required: ['advertiser_name', 'status'] } } }
 ];
 
-const WRITE_TOOLS = new Set(['create_task', 'complete_task', 'add_finance']);
+const WRITE_TOOLS = new Set(['create_task', 'complete_task', 'add_finance', 'add_advertiser', 'draft_advertiser_pitch', 'update_advertiser_status']);
 
 async function execReadTool(name, args) {
   switch (name) {
@@ -329,9 +346,25 @@ async function execReadTool(name, args) {
         return { error: 'TGStat недоступен: ' + err.message };
       }
     }
+    case 'list_advertisers': {
+      let query = supabase.from('advertisers').select('name, niche, status, priority, relevance_score, contact_info').order('created_at', { ascending: false });
+      if (args.status) query = query.eq('status', args.status);
+      if (args.project_name) {
+        const project = await findProjectByName(args.project_name);
+        if (project) query = query.eq('project_id', project.id);
+      }
+      const { data } = await query.limit(30);
+      return data || [];
+    }
     default:
       return { error: 'Неизвестный инструмент' };
   }
+}
+
+async function findAdvertiserByName(name) {
+  if (!name) return null;
+  const { data } = await supabase.from('advertisers').select('*').ilike('name', `%${name}%`).limit(1);
+  return data && data[0];
 }
 
 async function execWriteTool(name, args) {
@@ -355,6 +388,43 @@ async function execWriteTool(name, args) {
       if (error) return { error: error.message };
       return { ok: true };
     }
+    case 'add_advertiser': {
+      const project = await findProjectByName(args.project_name);
+      if (!project) return { error: 'Проект не найден' };
+      const { error } = await supabase.from('advertisers').insert({
+        project_id: project.id,
+        name: args.name,
+        niche: args.niche || null,
+        contact_info: args.contact_info || null,
+        website: args.website || null,
+        relevance_score: args.relevance_score || null,
+        priority: args.priority || 'medium',
+        source: args.source || null,
+        notes: args.notes || null
+      });
+      if (error) return { error: error.message };
+      return { ok: true };
+    }
+    case 'draft_advertiser_pitch': {
+      const advertiser = await findAdvertiserByName(args.advertiser_name);
+      if (!advertiser) return { error: 'Рекламодатель не найден' };
+      const { data: project } = await supabase.from('projects').select('name').eq('id', advertiser.project_id).limit(1).single();
+      const pitch = await askAI(`Напиши короткое дружелюбное питч-сообщение для бренда «${advertiser.name}» (ниша: ${advertiser.niche || 'не указана'}) с предложением рекламной интеграции в Telegram-канале «${project?.name || ''}». По делу, с конкретным предложением формата и без канцелярита.`);
+      const { error } = await supabase.from('advertisers').update({ pitch_text: pitch, status: 'pitch_drafted' }).eq('id', advertiser.id);
+      if (error) return { error: error.message };
+      return { ok: true, pitch };
+    }
+    case 'update_advertiser_status': {
+      const advertiser = await findAdvertiserByName(args.advertiser_name);
+      if (!advertiser) return { error: 'Рекламодатель не найден' };
+      const update = { status: args.status };
+      if (args.notes) update.notes = args.notes;
+      if (args.status === 'contacted' && !advertiser.first_contact_at) update.first_contact_at = new Date().toISOString();
+      if (args.status === 'contacted' || args.status === 'negotiating') update.last_contact_at = new Date().toISOString();
+      const { error } = await supabase.from('advertisers').update(update).eq('id', advertiser.id);
+      if (error) return { error: error.message };
+      return { ok: true };
+    }
     default:
       return { error: 'Неизвестный инструмент' };
   }
@@ -365,6 +435,9 @@ function describeAction(name, args) {
     case 'create_task': return `Создать задачу «${args.title}» в проекте «${args.project_name}»${args.priority ? ` (приоритет: ${args.priority})` : ''}`;
     case 'complete_task': return `Отметить задачу «${args.title}» выполненной`;
     case 'add_finance': return `Добавить ${args.type === 'income' ? 'доход' : 'расход'}: ${args.amount}₽${args.description ? ` (${args.description})` : ''}`;
+    case 'add_advertiser': return `Добавить рекламодателя «${args.name}»${args.niche ? ` (${args.niche})` : ''} в проект «${args.project_name}»`;
+    case 'draft_advertiser_pitch': return `Сгенерировать питч для «${args.advertiser_name}» и сохранить в карточку`;
+    case 'update_advertiser_status': return `Изменить статус «${args.advertiser_name}» на «${args.status}»`;
     default: return `${name}(${JSON.stringify(args)})`;
   }
 }
@@ -434,7 +507,7 @@ async function runAgent(ctx, userText, voiceReply = false) {
         model: MODEL,
         max_tokens: 2048,
         messages: [
-          { role: 'system', content: 'Ты — полноценный разговорный AI-агент PONA DIGITAL, отвечаешь буквально на любые вопросы в любой области (не только CRM). Для данных о проектах/задачах/финансах — свои инструменты. Для погоды и курсов валют — свои инструменты. Для ВСЕГО остального, что требует актуальных или конкретных фактов (новости, «сколько/кто/когда/из чего», любая незнакомая тебе тема) — используй web_search вместо догадок, не отказывайся отвечать. Отвечай кратко и по-русски.' },
+          { role: 'system', content: 'Ты — полноценный разговорный AI-агент PONA DIGITAL, отвечаешь буквально на любые вопросы в любой области (не только CRM). Для данных о проектах/задачах/финансах — свои инструменты. Для погоды и курсов валют — свои инструменты. Для поиска и учёта рекламодателей канала используй web_search, чтобы найти подходящие по нише бренды, затем add_advertiser, чтобы сохранить кандидата, draft_advertiser_pitch — чтобы написать питч, и update_advertiser_status — чтобы двигать по воронке (new → pitch_drafted → contacted → negotiating → deal/rejected). Никогда не отправляй сообщения рекламодателям сам — только готовь текст, отправляет владелец вручную. Для ВСЕГО остального, что требует актуальных или конкретных фактов (новости, «сколько/кто/когда/из чего», любая незнакомая тебе тема) — используй web_search вместо догадок, не отказывайся отвечать. Отвечай кратко и по-русски.' },
           { role: 'user', content: userText }
         ],
         tools: TOOLS
@@ -571,6 +644,7 @@ bot.on('text', async (ctx) => {
     case MENU_LABELS.tasks: return showTasks(ctx);
     case MENU_LABELS.content: return showPendingContent(ctx);
     case MENU_LABELS.finance: return showFinance(ctx);
+    case MENU_LABELS.advertisers: return showAdvertisers(ctx);
     case MENU_LABELS.ai: return ctx.reply('🤖 Напишите вопрос или пришлите голосовое сообщение — отвечу прямо здесь.');
   }
 

@@ -19,6 +19,7 @@ Claude Code — мозг системы. Он оркестрирует экос�
 3. Analytics — прогресс по проектам
 4. Finance — доходы/расходы
 5. AI Assistants — чат с ИИ
+6. Advertisers — воронка поиска рекламодателей по проектам (таблица `advertisers`, схема в `docs/advertisers-schema.sql`). Агент в bot.cjs ищет бренды по нише через web_search, сохраняет кандидатов (`add_advertiser`), готовит питч (`draft_advertiser_pitch`) и двигает статус по воронке `new → pitch_drafted → contacted → negotiating → deal/rejected` (`update_advertiser_status`). Агент никогда не отправляет сообщения рекламодателям сам — только готовит текст, отправка вручную владельцем.
 
 ## Content Factory
 - Площадки: Дзен, VK, Telegram, MAX, Instagram
