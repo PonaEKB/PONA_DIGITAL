@@ -677,6 +677,24 @@ async function generateAndUploadImage(id, prompt) {
   return pub.publicUrl;
 }
 
+// Telegram's own bot API нередко не может забрать файл с телеграмовского же CDN (cdn*.telesco.pe)
+// напрямую по URL при отправке ("Bad Request: failed to get HTTP URL content"), даже когда обычный
+// HTTP-запрос к той же ссылке отрабатывает нормально. Поэтому любое изображение из внешнего
+// источника (скриншот канала, og:image официальной страницы) сначала скачиваем сами и
+// перезаливаем в своё хранилище — так публикация гарантированно не упадёт по этой причине.
+async function downloadAndReupload(id, sourceUrl) {
+  const res = await fetch(sourceUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) throw new Error(`download failed: ${res.status}`);
+  const contentType = res.headers.get('content-type') || 'image/jpeg';
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
+  const path = `${id}/src-${Date.now()}.${ext}`;
+  const { error: upErr } = await supabase.storage.from(MEDIA_BUCKET).upload(path, buffer, { contentType });
+  if (upErr) throw new Error(upErr.message);
+  const { data: pub } = supabase.storage.from(MEDIA_BUCKET).getPublicUrl(path);
+  return pub.publicUrl;
+}
+
 let notifyInProgress = false;
 
 async function notifyNewDrafts() {
@@ -1351,14 +1369,22 @@ async function generateDigitalMindDigest() {
       let sourcePageUrl = null;
       const src = (typeof p.source_index === 'number') ? trimmed[p.source_index] : null;
       if (src && src.photoUrl && !usedPhotoUrls.has(src.photoUrl)) {
-        photo = src.photoUrl;
-        sourceUsername = src.username;
+        try {
+          photo = await downloadAndReupload(`digitalmind-${Date.now()}-${idx}`, src.photoUrl);
+          sourceUsername = src.username;
+        } catch (dlErr) {
+          console.log(`⚠️ Не удалось перезалить скриншот из @${src.username}: ${dlErr.message}`);
+        }
       }
       if (!photo && p.search_query) {
         const found = await findOfficialScreenshot(p.search_query);
         if (found && !usedPhotoUrls.has(found.imageUrl)) {
-          photo = found.imageUrl;
-          sourcePageUrl = found.pageUrl;
+          try {
+            photo = await downloadAndReupload(`digitalmind-${Date.now()}-${idx}`, found.imageUrl);
+            sourcePageUrl = found.pageUrl;
+          } catch (dlErr) {
+            console.log(`⚠️ Не удалось перезалить официальный скриншот: ${dlErr.message}`);
+          }
         }
       }
       if (!photo && p.image_prompt) {
