@@ -654,7 +654,6 @@ bot.on('text', async (ctx) => {
   try { await ctx.deleteMessage(thinking.message_id); } catch (_) {}
 });
 
-const MAX_PENDING_APPROVAL = 12; // держим в очереди на утверждение не больше ~3 дней контента разом
 
 async function generateAndUploadImage(id, prompt) {
   const genRes = await fetch(`${ROUTER_BASE_URL}/images/generations`, {
@@ -697,24 +696,29 @@ async function downloadAndReupload(id, sourceUrl) {
 
 let notifyInProgress = false;
 
+const PER_PROJECT_MAX_PENDING = 5; // на проект отдельно — иначе один зависший проект блокирует все остальные
+const MAX_NOTIFY_PER_CYCLE = 10; // общий предохранитель на один цикл (раз в минуту), чтобы не закинуть Telegram потоком
+
 async function notifyNewDrafts() {
   if (!OWNER_CHAT_ID || notifyInProgress) return;
   notifyInProgress = true;
   try {
-    const { count: pendingCount } = await supabase
+    // Лимит на утверждение — ПО КАЖДОМУ ПРОЕКТУ отдельно, а не один общий на всех. Иначе один
+    // канал с большой неотвеченной очередью (как было с «Чемодан Историй») блокирует уведомления
+    // вообще по всем остальным проектам, даже если там всего пара свежих черновиков.
+    const { data: pendingRows } = await supabase
       .from('content_items')
-      .select('id', { count: 'exact', head: true })
+      .select('project_id')
       .eq('platform', 'telegram')
       .eq('status', 'draft')
       .not('notified_at', 'is', null);
-
-    const freeSlots = MAX_PENDING_APPROVAL - (pendingCount || 0);
-    if (freeSlots <= 0) return;
+    const pendingByProject = {};
+    (pendingRows || []).forEach(r => { pendingByProject[r.project_id] = (pendingByProject[r.project_id] || 0) + 1; });
 
     // release_at — проекты со своим ритмом подтверждения (напр. «Звёздный Компас», раз в сутки
     // одной пачкой в 23:00 МСК) помечают черновики так, чтобы этот общий цикл не забирал их
     // раньше времени. NULL — как раньше, без ограничения.
-    const { data: items, error } = await supabase
+    const { data: candidates, error } = await supabase
       .from('content_items')
       .select('*')
       .eq('platform', 'telegram')
@@ -722,9 +726,20 @@ async function notifyNewDrafts() {
       .is('notified_at', null)
       .or(`release_at.is.null,release_at.lte.${new Date().toISOString()}`)
       .order('scheduled_at', { ascending: true })
-      .limit(freeSlots);
+      .limit(100);
 
-    if (error || !items || items.length === 0) return;
+    if (error || !candidates || candidates.length === 0) return;
+
+    const items = [];
+    for (const c of candidates) {
+      const used = pendingByProject[c.project_id] || 0;
+      if (used >= PER_PROJECT_MAX_PENDING) continue;
+      items.push(c);
+      pendingByProject[c.project_id] = used + 1;
+      if (items.length >= MAX_NOTIFY_PER_CYCLE) break;
+    }
+
+    if (items.length === 0) return;
 
     // Генерация картинки — тяжёлый запрос к тому же AI-провайдеру, что и живой чат с
     // владельцем; если гнать их пачкой, конкурентный чат-запрос может встать в очередь
@@ -1017,6 +1032,38 @@ function scheduleReminderChecks() {
     await checkReminders();
     scheduleReminderChecks();
   }, msUntilNextReminderCheck());
+}
+
+// Раз в день проверяем, нет ли постов со статусом "ошибка" по любому проекту, и сразу пишем
+// владельцу — иначе о сломанной публикации узнаём только если он сам случайно заметит в CRM.
+const FAILED_POSTS_CHECK_UTC_HOUR = 6; // 09:00 МСК
+
+function scheduleFailedPostsCheck() {
+  setTimeout(async () => {
+    await checkFailedPosts();
+    scheduleFailedPostsCheck();
+  }, msUntilNextUtcHour(FAILED_POSTS_CHECK_UTC_HOUR));
+}
+
+async function checkFailedPosts() {
+  if (!OWNER_CHAT_ID) return;
+  try {
+    const { data: failed } = await supabase
+      .from('content_items')
+      .select('id, topic, error, project_id')
+      .eq('platform', 'telegram')
+      .eq('status', 'failed');
+    if (!failed || failed.length === 0) return;
+
+    const { data: projects } = await supabase.from('projects').select('id, name');
+    const nameById = Object.fromEntries((projects || []).map(p => [p.id, p.name]));
+
+    const lines = failed.slice(0, 20).map(f => `• ${nameById[f.project_id] || '?'} — ${f.topic || 'без темы'}: ${f.error || 'без описания ошибки'}`);
+    const extra = failed.length > 20 ? `\n…и ещё ${failed.length - 20}` : '';
+    await bot.telegram.sendMessage(OWNER_CHAT_ID, `⚠️ Посты со статусом «ошибка» (${failed.length}), не опубликованы:\n\n${lines.join('\n')}${extra}`);
+  } catch (e) {
+    console.log(`⚠️ Ошибка проверки failed-постов: ${e.message}`);
+  }
 }
 
 async function checkReminders() {
@@ -1549,6 +1596,10 @@ if (OWNER_CHAT_ID) {
   checkReminders();
   scheduleReminderChecks();
   console.log('🔔 Проверка напоминаний включена (дважды в сутки: 06:00 и 22:00 по Екатеринбургу)');
+
+  checkFailedPosts();
+  scheduleFailedPostsCheck();
+  console.log('⚠️ Проверка постов со статусом «ошибка» включена (раз в сутки, в 09:00 МСК)');
 
   // Без немедленного запуска при старте — иначе каждый передеплой слал бы новую пачку.
   // Первую пачку с настоящими фото отправляем один раз вручную отдельным скриптом.
