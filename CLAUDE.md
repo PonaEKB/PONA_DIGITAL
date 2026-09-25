@@ -20,6 +20,7 @@ Claude Code — мозг системы. Он оркестрирует экос�
 4. Finance — доходы/расходы
 5. AI Assistants — чат с ИИ
 6. Advertisers — воронка поиска рекламодателей по проектам (таблица `advertisers`, схема в `docs/advertisers-schema.sql`). Агент в bot.cjs ищет бренды по нише через web_search, сохраняет кандидатов (`add_advertiser`), готовит питч (`draft_advertiser_pitch`) и двигает статус по воронке `new → pitch_drafted → contacted → negotiating → deal/rejected` (`update_advertiser_status`). Агент никогда не отправляет сообщения рекламодателям сам — только готовит текст, отправка вручную владельцем.
+7. Cross-promo — воронка поиска партнёров для взаимного пиара постами без денег (таблица `cross_promo_partners`, схема в `docs/cross-promo-partners-schema.sql`). Та же логика, что у Advertisers, но отдельная сущность: агент ищет каналы похожей тематики/размера через web_search (`add_partner`), готовит предложение обмена (`draft_partner_pitch`) и двигает статус по воронке `new → pitch_drafted → contacted → negotiating → agreed → completed/rejected` (`update_partner_status`). Важно: агент никогда не пишет и не комментирует в чужих каналах/чатах сам — это было бы спамом и нарушением правил Telegram; только готовит текст для ручной отправки владельцем.
 
 ## Content Factory
 - Площадки: Дзен, VK, Telegram, MAX, Instagram

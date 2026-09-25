@@ -66,6 +66,7 @@ const MENU_LABELS = {
   content: '🎨 На утверждение',
   finance: '💰 Финансы',
   advertisers: '🤝 Реклама',
+  partners: '🔄 Кросс-промо',
   ai: '🤖 Спросить AI'
 };
 
@@ -74,7 +75,7 @@ function mainReplyKeyboard() {
     [MENU_LABELS.stats, MENU_LABELS.projects],
     [MENU_LABELS.tasks, MENU_LABELS.content],
     [MENU_LABELS.finance, MENU_LABELS.advertisers],
-    [MENU_LABELS.ai]
+    [MENU_LABELS.partners, MENU_LABELS.ai]
   ]).resize();
 }
 
@@ -185,6 +186,17 @@ async function showAdvertisers(ctx) {
   await ctx.reply(`🤝 Рекламодатели:\n\n${text}`);
 }
 
+const PARTNER_STATUS_EMOJI = {
+  new: '🆕', pitch_drafted: '✍️', contacted: '📨', negotiating: '🤝', agreed: '✅', completed: '🏁', rejected: '❌'
+};
+
+async function showPartners(ctx) {
+  const list = await execReadTool('list_partners', {});
+  if (!list.length) return ctx.reply('🔄 Пока нет партнёров для кросс-промо. Напишите мне, например: «найди каналы для кросс-промо для Вкусной географии».');
+  const text = list.map(p => `${PARTNER_STATUS_EMOJI[p.status] || '•'} ${p.channel_name}${p.niche ? ` (${p.niche})` : ''}${p.subscriber_count ? `, ~${p.subscriber_count} подписчиков` : ''} — ${p.status}`).join('\n');
+  await ctx.reply(`🔄 Кросс-промо партнёры:\n\n${text}`);
+}
+
 bot.command('myid', (ctx) => ctx.reply(`Ваш chat_id: ${ctx.chat.id}`));
 
 bot.command('ai', async (ctx) => {
@@ -238,10 +250,14 @@ const TOOLS = [
   { type: 'function', function: { name: 'list_advertisers', description: 'Список потенциальных рекламодателей проекта, опционально по статусу воронки', parameters: { type: 'object', properties: { project_name: { type: 'string' }, status: { type: 'string', enum: ['new', 'pitch_drafted', 'contacted', 'negotiating', 'deal', 'rejected'] } }, required: [] } } },
   { type: 'function', function: { name: 'add_advertiser', description: 'Добавить нового кандидата в рекламодатели проекта (требует подтверждения)', parameters: { type: 'object', properties: { project_name: { type: 'string' }, name: { type: 'string' }, niche: { type: 'string' }, contact_info: { type: 'string' }, website: { type: 'string' }, relevance_score: { type: 'number', description: '1-5, насколько бренд подходит тематике канала' }, priority: { type: 'string', enum: ['high', 'medium', 'low'] }, source: { type: 'string' }, notes: { type: 'string' } }, required: ['project_name', 'name'] } } },
   { type: 'function', function: { name: 'draft_advertiser_pitch', description: 'Сгенерировать питч-сообщение для конкретного рекламодателя и сохранить в его карточку (требует подтверждения)', parameters: { type: 'object', properties: { advertiser_name: { type: 'string' } }, required: ['advertiser_name'] } } },
-  { type: 'function', function: { name: 'update_advertiser_status', description: 'Изменить статус рекламодателя в воронке, например после ответа или сделки (требует подтверждения)', parameters: { type: 'object', properties: { advertiser_name: { type: 'string' }, status: { type: 'string', enum: ['new', 'pitch_drafted', 'contacted', 'negotiating', 'deal', 'rejected'] }, notes: { type: 'string' } }, required: ['advertiser_name', 'status'] } } }
+  { type: 'function', function: { name: 'update_advertiser_status', description: 'Изменить статус рекламодателя в воронке, например после ответа или сделки (требует подтверждения)', parameters: { type: 'object', properties: { advertiser_name: { type: 'string' }, status: { type: 'string', enum: ['new', 'pitch_drafted', 'contacted', 'negotiating', 'deal', 'rejected'] }, notes: { type: 'string' } }, required: ['advertiser_name', 'status'] } } },
+  { type: 'function', function: { name: 'list_partners', description: 'Список кандидатов для кросс-промо (обмен постами с другими каналами) проекта, опционально по статусу воронки', parameters: { type: 'object', properties: { project_name: { type: 'string' }, status: { type: 'string', enum: ['new', 'pitch_drafted', 'contacted', 'negotiating', 'agreed', 'completed', 'rejected'] } }, required: [] } } },
+  { type: 'function', function: { name: 'add_partner', description: 'Добавить нового кандидата для кросс-промо — канал похожей тематики для взаимного пиара постами (требует подтверждения)', parameters: { type: 'object', properties: { project_name: { type: 'string' }, channel_name: { type: 'string' }, channel_username: { type: 'string' }, niche: { type: 'string' }, subscriber_count: { type: 'number' }, contact_info: { type: 'string' }, priority: { type: 'string', enum: ['high', 'medium', 'low'] }, source: { type: 'string' }, notes: { type: 'string' } }, required: ['project_name', 'channel_name'] } } },
+  { type: 'function', function: { name: 'draft_partner_pitch', description: 'Сгенерировать предложение о кросс-промо (взаимный пиар постами, без денег) для конкретного канала-партнёра и сохранить в его карточку (требует подтверждения)', parameters: { type: 'object', properties: { channel_name: { type: 'string' } }, required: ['channel_name'] } } },
+  { type: 'function', function: { name: 'update_partner_status', description: 'Изменить статус партнёра по кросс-промо в воронке, например после ответа или проведённого обмена (требует подтверждения)', parameters: { type: 'object', properties: { channel_name: { type: 'string' }, status: { type: 'string', enum: ['new', 'pitch_drafted', 'contacted', 'negotiating', 'agreed', 'completed', 'rejected'] }, notes: { type: 'string' } }, required: ['channel_name', 'status'] } } }
 ];
 
-const WRITE_TOOLS = new Set(['create_task', 'complete_task', 'add_finance', 'add_advertiser', 'draft_advertiser_pitch', 'update_advertiser_status']);
+const WRITE_TOOLS = new Set(['create_task', 'complete_task', 'add_finance', 'add_advertiser', 'draft_advertiser_pitch', 'update_advertiser_status', 'add_partner', 'draft_partner_pitch', 'update_partner_status']);
 
 async function execReadTool(name, args) {
   switch (name) {
@@ -356,6 +372,16 @@ async function execReadTool(name, args) {
       const { data } = await query.limit(30);
       return data || [];
     }
+    case 'list_partners': {
+      let query = supabase.from('cross_promo_partners').select('channel_name, niche, subscriber_count, status, priority, contact_info').order('created_at', { ascending: false });
+      if (args.status) query = query.eq('status', args.status);
+      if (args.project_name) {
+        const project = await findProjectByName(args.project_name);
+        if (project) query = query.eq('project_id', project.id);
+      }
+      const { data } = await query.limit(30);
+      return data || [];
+    }
     default:
       return { error: 'Неизвестный инструмент' };
   }
@@ -364,6 +390,12 @@ async function execReadTool(name, args) {
 async function findAdvertiserByName(name) {
   if (!name) return null;
   const { data } = await supabase.from('advertisers').select('*').ilike('name', `%${name}%`).limit(1);
+  return data && data[0];
+}
+
+async function findPartnerByName(name) {
+  if (!name) return null;
+  const { data } = await supabase.from('cross_promo_partners').select('*').ilike('channel_name', `%${name}%`).limit(1);
   return data && data[0];
 }
 
@@ -425,6 +457,45 @@ async function execWriteTool(name, args) {
       if (error) return { error: error.message };
       return { ok: true };
     }
+    case 'add_partner': {
+      const project = await findProjectByName(args.project_name);
+      if (!project) return { error: 'Проект не найден' };
+      const { error } = await supabase.from('cross_promo_partners').insert({
+        project_id: project.id,
+        channel_name: args.channel_name,
+        channel_username: args.channel_username || null,
+        niche: args.niche || null,
+        subscriber_count: args.subscriber_count || null,
+        contact_info: args.contact_info || null,
+        priority: args.priority || 'medium',
+        source: args.source || null,
+        notes: args.notes || null
+      });
+      if (error) return { error: error.message };
+      return { ok: true };
+    }
+    case 'draft_partner_pitch': {
+      const partner = await findPartnerByName(args.channel_name);
+      if (!partner) return { error: 'Партнёр не найден' };
+      const { data: project } = await supabase.from('projects').select('name, id').eq('id', partner.project_id).limit(1).single();
+      const { data: snapshots } = await supabase.from('channel_stats_snapshots').select('subscriber_count').eq('project_id', project?.id).order('captured_at', { ascending: false }).limit(1);
+      const ourSubs = snapshots?.[0]?.subscriber_count;
+      const pitch = await askAI(`Напиши короткое дружелюбное предложение о кросс-промо (взаимный пиар постами, БЕЗ денег) для канала «${partner.channel_name}»${partner.niche ? ` (ниша: ${partner.niche})` : ''}${partner.subscriber_count ? `, у них примерно ${partner.subscriber_count} подписчиков` : ''} от лица канала «${project?.name || ''}»${ourSubs ? ` (у нас ~${ourSubs} подписчиков)` : ''}. Предложи конкретный формат обмена (пост за пост, в один день), подчеркни взаимную выгоду для обеих аудиторий. Без канцелярита и без ощущения спама.`);
+      const { error } = await supabase.from('cross_promo_partners').update({ pitch_text: pitch, status: 'pitch_drafted' }).eq('id', partner.id);
+      if (error) return { error: error.message };
+      return { ok: true, pitch };
+    }
+    case 'update_partner_status': {
+      const partner = await findPartnerByName(args.channel_name);
+      if (!partner) return { error: 'Партнёр не найден' };
+      const update = { status: args.status };
+      if (args.notes) update.notes = args.notes;
+      if (args.status === 'contacted' && !partner.first_contact_at) update.first_contact_at = new Date().toISOString();
+      if (args.status === 'contacted' || args.status === 'negotiating') update.last_contact_at = new Date().toISOString();
+      const { error } = await supabase.from('cross_promo_partners').update(update).eq('id', partner.id);
+      if (error) return { error: error.message };
+      return { ok: true };
+    }
     default:
       return { error: 'Неизвестный инструмент' };
   }
@@ -438,6 +509,9 @@ function describeAction(name, args) {
     case 'add_advertiser': return `Добавить рекламодателя «${args.name}»${args.niche ? ` (${args.niche})` : ''} в проект «${args.project_name}»`;
     case 'draft_advertiser_pitch': return `Сгенерировать питч для «${args.advertiser_name}» и сохранить в карточку`;
     case 'update_advertiser_status': return `Изменить статус «${args.advertiser_name}» на «${args.status}»`;
+    case 'add_partner': return `Добавить канал «${args.channel_name}»${args.niche ? ` (${args.niche})` : ''} как кандидата на кросс-промо в проект «${args.project_name}»`;
+    case 'draft_partner_pitch': return `Сгенерировать предложение о кросс-промо для «${args.channel_name}» и сохранить в карточку`;
+    case 'update_partner_status': return `Изменить статус партнёра «${args.channel_name}» на «${args.status}»`;
     default: return `${name}(${JSON.stringify(args)})`;
   }
 }
@@ -507,7 +581,7 @@ async function runAgent(ctx, userText, voiceReply = false) {
         model: MODEL,
         max_tokens: 2048,
         messages: [
-          { role: 'system', content: 'Ты — полноценный разговорный AI-агент PONA DIGITAL, отвечаешь буквально на любые вопросы в любой области (не только CRM). Для данных о проектах/задачах/финансах — свои инструменты. Для погоды и курсов валют — свои инструменты. Для поиска и учёта рекламодателей канала используй web_search, чтобы найти подходящие по нише бренды, затем add_advertiser, чтобы сохранить кандидата, draft_advertiser_pitch — чтобы написать питч, и update_advertiser_status — чтобы двигать по воронке (new → pitch_drafted → contacted → negotiating → deal/rejected). Никогда не отправляй сообщения рекламодателям сам — только готовь текст, отправляет владелец вручную. Для ВСЕГО остального, что требует актуальных или конкретных фактов (новости, «сколько/кто/когда/из чего», любая незнакомая тебе тема) — используй web_search вместо догадок, не отказывайся отвечать. Отвечай кратко и по-русски.' },
+          { role: 'system', content: 'Ты — полноценный разговорный AI-агент PONA DIGITAL, отвечаешь буквально на любые вопросы в любой области (не только CRM). Для данных о проектах/задачах/финансах — свои инструменты. Для погоды и курсов валют — свои инструменты. Для поиска и учёта рекламодателей канала используй web_search, чтобы найти подходящие по нише бренды, затем add_advertiser, чтобы сохранить кандидата, draft_advertiser_pitch — чтобы написать питч, и update_advertiser_status — чтобы двигать по воронке (new → pitch_drafted → contacted → negotiating → deal/rejected). Для поиска партнёров по кросс-промо (взаимный пиар постами с другими каналами похожей тематики, БЕЗ денег) используй web_search, чтобы найти похожие по нише и размеру аудитории каналы, затем add_partner, draft_partner_pitch и update_partner_status (воронка new → pitch_drafted → contacted → negotiating → agreed → completed/rejected) — аналогично рекламодателям, но это отдельная сущность, не путай их. Никогда не отправляй сообщения рекламодателям или партнёрам сам, не комментируй и не пиши что-либо в чужих каналах/чатах от имени владельца — только готовь текст, отправляет владелец вручную. Для ВСЕГО остального, что требует актуальных или конкретных фактов (новости, «сколько/кто/когда/из чего», любая незнакомая тебе тема) — используй web_search вместо догадок, не отказывайся отвечать. Отвечай кратко и по-русски.' },
           { role: 'user', content: userText }
         ],
         tools: TOOLS
@@ -645,6 +719,7 @@ bot.on('text', async (ctx) => {
     case MENU_LABELS.content: return showPendingContent(ctx);
     case MENU_LABELS.finance: return showFinance(ctx);
     case MENU_LABELS.advertisers: return showAdvertisers(ctx);
+    case MENU_LABELS.partners: return showPartners(ctx);
     case MENU_LABELS.ai: return ctx.reply('🤖 Напишите вопрос или пришлите голосовое сообщение — отвечу прямо здесь.');
   }
 
